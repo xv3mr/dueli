@@ -1,21 +1,26 @@
 --[[
     ╔══════════════════════════════════════════════════════════════════╗
-    ║          Universal FPS Engine — Fully Custom UI Edition          ║
+    ║                         Aether Engine                          ║
+    ║  Spinbot + Auto-Bhop + No Jump Slowdown + All Features         ║
     ╚══════════════════════════════════════════════════════════════════╝
 ]]
+
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Qanuir/orion-ui/refs/heads/main/source.lua"))()
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
-local CoreGui = game:GetService("CoreGui")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
+
 if not Drawing then
     warn("shitty executor detected: this script requires drawing api")
     return
 end
+
 local mouse1press = mouse1press or function() end
 local mouse1release = mouse1release or function() end
 local newcclosure = newcclosure or function(f) return f end
@@ -23,8 +28,9 @@ local WTVP = Camera.WorldToViewportPoint
 local Vector2_new = Vector2.new
 local Color3_fromRGB = Color3.fromRGB
 local Math_floor = math.floor
+local CFrame_new = CFrame.new
+local CFrame_lookAt = CFrame.lookAt
 
--- Midnight Black and Blue Theme Configurations
 local Theme = {
     Background = Color3_fromRGB(12, 12, 15),
     Sidebar = Color3_fromRGB(8, 8, 10),
@@ -34,15 +40,44 @@ local Theme = {
     TextActive = Color3_fromRGB(255, 255, 255),
     TextMuted = Color3_fromRGB(150, 150, 150),
 }
+
 local ScriptRunning = true
 local ESP_Store = {}
 local Connections = {}
-local UI_Store = {}
 local SilentAimTarget = nil
+local AimLockTarget = nil
+local AimLockHeld = false
+local lastCameraTick = tick()
 
+-- Mobile button state
+local MobileLockActive = false
+local MobileGui = nil
+local MobileButton = nil
+
+-- Key mapping (EXCLUDES MouseButton1 to prevent camera blocking)
+local KeyOptions = {
+    "Right Mouse", "Q", "E", "Left Shift", 
+    "Left Ctrl", "F", "T", "V", "X", "C", "R", "G", "Z"
+}
+local KeyMap = {
+    ["Right Mouse"] = Enum.UserInputType.MouseButton2,
+    ["Q"] = Enum.KeyCode.Q,
+    ["E"] = Enum.KeyCode.E,
+    ["Left Shift"] = Enum.KeyCode.LeftShift,
+    ["Left Ctrl"] = Enum.KeyCode.LeftControl,
+    ["F"] = Enum.KeyCode.F,
+    ["T"] = Enum.KeyCode.T,
+    ["V"] = Enum.KeyCode.V,
+    ["X"] = Enum.KeyCode.X,
+    ["C"] = Enum.KeyCode.C,
+    ["R"] = Enum.KeyCode.R,
+    ["G"] = Enum.KeyCode.G,
+    ["Z"] = Enum.KeyCode.Z,
+}
+local CurrentKey = KeyMap["Left Shift"]
+
+-- ==================== CONFIG ====================
 local Config = {
-    Global = { MenuOpen = true, Keybind = Enum.KeyCode.Insert },
-    -- [Aimbot removed – only silent aim remains]
     SilentAim = {
         Enabled = false,
         FOV = 100,
@@ -51,6 +86,17 @@ local Config = {
         WallBang = false,
         ShowFOV = false,
         FOVColor = Theme.Accent,
+    },
+    AimLock = {
+        AlwaysEnabled = false,
+        BindEnabled = true,
+        Smoothness = 0.15,
+        FOV = 200,
+        WallCheck = true,
+        ShowFOV = true,
+        FOVColor = Color3_fromRGB(255, 0, 128),
+        TargetPart = "Head",
+        TargetMode = "Crosshair",
     },
     Triggerbot = {
         Enabled = false,
@@ -80,7 +126,7 @@ local Config = {
         InfoColor = {R=255,G=255,B=255},
     },
     FOV_Circle = {
-        Enabled = true,   -- now controls silent aim FOV circle
+        Enabled = true,
         Color = Color3_fromRGB(255, 255, 255),
         Transparency = 0.5,
         Thickness = 1,
@@ -89,477 +135,563 @@ local Config = {
     Movement = {
         EnabledWS = false, WalkSpeed = 16,
         EnabledJP = false, JumpPower = 50,
-        Bhop = false, BhopKey = Enum.KeyCode.V
+        Bhop = false, BhopKey = Enum.KeyCode.V,
+        Spinbot = false, SpinSpeed = 50,
+        NoJumpSlowdown = false,
     },
     GunMods = { InfiniteAmmo = false, ReloadInterval = 1.0 },
     Hitbox = {
         Enabled = false,
-        HeadSize = 50,
+        HeadSize = 2,
         ViewHitbox = false,
         HitboxColor = {R=255, G=0, B=0},
     }
 }
 
-local function SendNotification(text, color)
-    local GUI = nil
-    for _, v in pairs(UI_Store) do if v:IsA("ScreenGui") then GUI = v; break end end
-    if not GUI then return end
-    local NoteFrame = Instance.new("Frame")
-    NoteFrame.Name = "Notification"
-    NoteFrame.Size = UDim2.new(0, 200, 0, 40)
-    NoteFrame.Position = UDim2.new(1, 20, 0.85, 0)
-    NoteFrame.BackgroundColor3 = Theme.Topbar
-    NoteFrame.BorderSizePixel = 0
-    NoteFrame.Parent = GUI
-    local Corner = Instance.new("UICorner"); Corner.CornerRadius = UDim.new(0, 6); Corner.Parent = NoteFrame
-    local Strip = Instance.new("Frame")
-    Strip.Size = UDim2.new(0, 4, 1, 0)
-    Strip.BackgroundColor3 = color or Theme.Accent
-    Strip.BorderSizePixel = 0
-    Strip.Parent = NoteFrame
-    Instance.new("UICorner", Strip).CornerRadius = UDim.new(0, 6)
-    local Label = Instance.new("TextLabel")
-    Label.Text = text
-    Label.Size = UDim2.new(1, -15, 1, 0)
-    Label.Position = UDim2.new(0, 10, 0, 0)
-    Label.BackgroundTransparency = 1
-    Label.TextColor3 = Theme.TextActive
-    Label.Font = Enum.Font.GothamBold
-    Label.TextSize = 14
-    Label.TextXAlignment = Enum.TextXAlignment.Left
-    Label.Parent = NoteFrame
-    TweenService:Create(NoteFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(1, -220, 0.85, 0)}):Play()
-    task.spawn(function()
-        task.wait(2)
-        TweenService:Create(NoteFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {Position = UDim2.new(1, 20, 0.85, 0)}):Play()
-        task.wait(0.5)
-        NoteFrame:Destroy()
-    end)
+-- ==================== NOTIFICATIONS ====================
+local function SendNotification(text)
+    OrionLib:MakeNotification({
+        Name = "Aether",
+        Content = text,
+        Image = "rbxassetid://4483345998",
+        Time = 3
+    })
 end
 
-local Library = {}
-local MainFrameInstance = nil
-function Library:CreateUI()
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "UniversalFPSGui_" .. math.random(1000,9999)
-    ScreenGui.ResetOnSpawn = false
-    
-    if gethui then
-        ScreenGui.Parent = gethui()
-    elseif CoreGui:FindFirstChild("RobloxGui") then
-        ScreenGui.Parent = CoreGui
-    else
-        ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    end
-    
-    table.insert(UI_Store, ScreenGui)
-    local MainFrame = Instance.new("Frame")
-    MainFrame.Name = "MainFrame"
-    MainFrame.Size = UDim2.new(0, 550, 0, 380)
-    MainFrame.Position = UDim2.new(0.5, -275, 0.5, -190)
-    MainFrame.BackgroundColor3 = Theme.Background
-    MainFrame.BorderSizePixel = 0
-    MainFrame.ClipsDescendants = true
-    MainFrame.Parent = ScreenGui
-    
-    MainFrameInstance = MainFrame
-    local MainCorner = Instance.new("UICorner")
-    MainCorner.CornerRadius = UDim.new(0, 6)
-    MainCorner.Parent = MainFrame
-    
-    local Dragging, DragStart, StartPos
-    local function Update(input)
-        local Delta = input.Position - DragStart
-        MainFrame.Position = UDim2.new(StartPos.X.Scale, StartPos.X.Offset + Delta.X, StartPos.Y.Scale, StartPos.Y.Offset + Delta.Y)
-    end
-    MainFrame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            Dragging = true
-            DragStart = input.Position
-            StartPos = MainFrame.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then Dragging = false end
-            end)
+-- ==================== ORION UI ====================
+local Window = OrionLib:MakeWindow({
+    Name = "Aether",
+    HidePremium = false,
+    SaveConfig = true,
+    ConfigFolder = "AetherConfig"
+})
+
+local OrionElements = {}
+
+-- Silent Aim Tab
+local SilentAimTab = Window:MakeTab({Name = "Silent Aim", Icon = "rbxassetid://4483345998"})
+OrionElements.SilentAimEnabled = SilentAimTab:AddToggle({
+    Name = "Enabled",
+    Default = Config.SilentAim.Enabled,
+    Callback = function(v) Config.SilentAim.Enabled = v end
+})
+OrionElements.SilentAimWallCheck = SilentAimTab:AddToggle({
+    Name = "Wall Check",
+    Default = Config.SilentAim.WallCheck,
+    Callback = function(v) Config.SilentAim.WallCheck = v end
+})
+OrionElements.SilentAimWallBang = SilentAimTab:AddToggle({
+    Name = "Wall Bang",
+    Default = Config.SilentAim.WallBang,
+    Callback = function(v) Config.SilentAim.WallBang = v end
+})
+OrionElements.SilentAimFOV = SilentAimTab:AddSlider({
+    Name = "FOV",
+    Min = 10,
+    Max = 500,
+    Default = Config.SilentAim.FOV,
+    Increment = 1,
+    ValueName = "px",
+    Callback = function(v) Config.SilentAim.FOV = v end
+})
+OrionElements.SilentAimShowFOV = SilentAimTab:AddToggle({
+    Name = "Show FOV Circle",
+    Default = Config.SilentAim.ShowFOV,
+    Callback = function(v) Config.SilentAim.ShowFOV = v end
+})
+SilentAimTab:AddDropdown({
+    Name = "Aim Part",
+    Default = Config.SilentAim.AimPart,
+    Options = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "Torso"},
+    Callback = function(v) Config.SilentAim.AimPart = v end
+})
+
+-- Aim Lock Tab
+local AimLockTab = Window:MakeTab({Name = "Aim Lock", Icon = "rbxassetid://4483345998"})
+OrionElements.AimLockAlways = AimLockTab:AddToggle({
+    Name = "Always Enabled (Auto-Lock)",
+    Default = Config.AimLock.AlwaysEnabled,
+    Callback = function(v)
+        Config.AimLock.AlwaysEnabled = v
+        if MobileGui then
+            MobileGui.Enabled = v
         end
-    end)
-    MainFrame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            if Dragging then Update(input) end
-        end
-    end)
-    local TopBar = Instance.new("Frame")
-    TopBar.Size = UDim2.new(1, 0, 0, 30)
-    TopBar.BackgroundColor3 = Theme.Topbar
-    TopBar.BorderSizePixel = 0
-    TopBar.Parent = MainFrame
-    Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 6)
-    local Title = Instance.new("TextLabel")
-    Title.Text = "Universal FPS Gui | By Thetrekir"
-    Title.Size = UDim2.new(1, -20, 1, 0)
-    Title.Position = UDim2.new(0, 10, 0, 0)
-    Title.BackgroundTransparency = 1
-    Title.TextColor3 = Theme.TextMuted
-    Title.Font = Enum.Font.GothamBold
-    Title.TextSize = 14
-    Title.TextXAlignment = Enum.TextXAlignment.Left
-    Title.Parent = TopBar
-    local TabContainer = Instance.new("Frame")
-    TabContainer.Size = UDim2.new(0, 120, 1, -30)
-    TabContainer.Position = UDim2.new(0, 0, 0, 30)
-    TabContainer.BackgroundColor3 = Theme.Sidebar
-    TabContainer.BorderSizePixel = 0
-    TabContainer.Parent = MainFrame
-    
-    local TabListLayout = Instance.new("UIListLayout")
-    TabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    TabListLayout.Padding = UDim.new(0, 5)
-    TabListLayout.Parent = TabContainer
-    
-    local TabPadding = Instance.new("UIPadding")
-    TabPadding.PaddingTop = UDim.new(0, 10)
-    TabPadding.Parent = TabContainer
-    local PageContainer = Instance.new("Frame")
-    PageContainer.Size = UDim2.new(1, -120, 1, -30)
-    PageContainer.Position = UDim2.new(0, 120, 0, 30)
-    PageContainer.BackgroundTransparency = 1
-    PageContainer.Parent = MainFrame
-    local Tabs = {}
-    local FirstTab = true
-    function Tabs:CreateTab(Name)
-        local TabButton = Instance.new("TextButton")
-        TabButton.Text = Name
-        TabButton.Size = UDim2.new(1, -10, 0, 30)
-        TabButton.BackgroundColor3 = Theme.Background
-        TabButton.TextColor3 = Theme.TextMuted
-        TabButton.Font = Enum.Font.GothamSemibold
-        TabButton.TextSize = 13
-        TabButton.AutoButtonColor = false
-        TabButton.Parent = TabContainer
-        
-        local TabCorner = Instance.new("UICorner")
-        TabCorner.CornerRadius = UDim.new(0, 4)
-        TabCorner.Parent = TabButton
-        local Page = Instance.new("ScrollingFrame")
-        Page.Size = UDim2.new(1, -10, 1, -10)
-        Page.Position = UDim2.new(0, 5, 0, 5)
-        Page.BackgroundTransparency = 1
-        Page.ScrollBarThickness = 2
-        Page.ScrollBarImageColor3 = Theme.Accent
-        Page.Visible = false
-        Page.Parent = PageContainer
-        
-        local PageLayout = Instance.new("UIListLayout")
-        PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        PageLayout.Padding = UDim.new(0, 5)
-        PageLayout.Parent = Page
-        
-        if FirstTab then
-            FirstTab = false
-            Page.Visible = true
-            TabButton.TextColor3 = Theme.TextActive
-            TabButton.BackgroundColor3 = Theme.Element
-        end
-        TabButton.MouseButton1Click:Connect(function()
-            for _, v in pairs(PageContainer:GetChildren()) do if v:IsA("ScrollingFrame") then v.Visible = false end end
-            for _, v in pairs(TabContainer:GetChildren()) do 
-                if v:IsA("TextButton") then 
-                    TweenService:Create(v, TweenInfo.new(0.2), {TextColor3 = Theme.TextMuted, BackgroundColor3 = Theme.Background}):Play()
-                end 
+        if not v then
+            MobileLockActive = false
+            if MobileButton then
+                MobileButton.Text = "LOCK OFF"
+                MobileButton.BackgroundColor3 = Color3.fromRGB(255, 0, 128)
             end
-            Page.Visible = true
-            TweenService:Create(TabButton, TweenInfo.new(0.2), {TextColor3 = Theme.TextActive, BackgroundColor3 = Theme.Element}):Play()
-        end)
-        local Elements = {}
-        
-        function Elements:AddToggle(Text, ConfigTable, ConfigKey)
-            local ToggleFrame = Instance.new("Frame")
-            ToggleFrame.Size = UDim2.new(1, 0, 0, 30)
-            ToggleFrame.BackgroundColor3 = Theme.Element
-            ToggleFrame.Parent = Page
-            Instance.new("UICorner", ToggleFrame).CornerRadius = UDim.new(0,4)
-            
-            local Label = Instance.new("TextLabel")
-            Label.Text = Text
-            Label.Size = UDim2.new(0.7, 0, 1, 0)
-            Label.Position = UDim2.new(0, 10, 0, 0)
-            Label.BackgroundTransparency = 1
-            Label.TextColor3 = Color3_fromRGB(220, 220, 220)
-            Label.Font = Enum.Font.Gotham
-            Label.TextSize = 13
-            Label.TextXAlignment = Enum.TextXAlignment.Left
-            Label.Parent = ToggleFrame
-            
-            local Button = Instance.new("TextButton")
-            Button.Text = ""
-            Button.Size = UDim2.new(0, 20, 0, 20)
-            Button.Position = UDim2.new(1, -30, 0.5, -10)
-            Button.BackgroundColor3 = ConfigTable[ConfigKey] and Theme.Accent or Color3_fromRGB(60, 60, 60)
-            Button.Parent = ToggleFrame
-            Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 4)
-            
-            Button.MouseButton1Click:Connect(function()
-                ConfigTable[ConfigKey] = not ConfigTable[ConfigKey]
-                TweenService:Create(Button, TweenInfo.new(0.2), {BackgroundColor3 = ConfigTable[ConfigKey] and Theme.Accent or Color3_fromRGB(60, 60, 60)}):Play()
-                
-                if ConfigKey == "Enabled" and ConfigTable == Config.Triggerbot then
-                    if ConfigTable[ConfigKey] then
-                        SendNotification("Triggerbot: ENABLED", Theme.Accent)
-                    else
-                        SendNotification("Triggerbot: DISABLED", Color3_fromRGB(255, 50, 50))
-                    end
-                end
-            end)
-            return Button
         end
+    end
+})
+OrionElements.AimLockBind = AimLockTab:AddToggle({
+    Name = "Bind Mode (Hold Key)",
+    Default = Config.AimLock.BindEnabled,
+    Callback = function(v) Config.AimLock.BindEnabled = v end
+})
+AimLockTab:AddDropdown({
+    Name = "Hold Keybind",
+    Default = "Left Shift",
+    Options = KeyOptions,
+    Callback = function(selected)
+        CurrentKey = KeyMap[selected]
+    end
+})
+AimLockTab:AddDropdown({
+    Name = "Target Mode",
+    Default = Config.AimLock.TargetMode,
+    Options = {"Crosshair", "Distance"},
+    Callback = function(v) Config.AimLock.TargetMode = v end
+})
+OrionElements.AimLockSmoothness = AimLockTab:AddSlider({
+    Name = "Smoothness",
+    Min = 0.01,
+    Max = 1.0,
+    Default = Config.AimLock.Smoothness,
+    Increment = 0.01,
+    ValueName = "",
+    Callback = function(v) Config.AimLock.Smoothness = v end
+})
+OrionElements.AimLockFOV = AimLockTab:AddSlider({
+    Name = "FOV",
+    Min = 10,
+    Max = 500,
+    Default = Config.AimLock.FOV,
+    Increment = 1,
+    ValueName = "px",
+    Callback = function(v) Config.AimLock.FOV = v end
+})
+OrionElements.AimLockWallCheck = AimLockTab:AddToggle({
+    Name = "Wall Check",
+    Default = Config.AimLock.WallCheck,
+    Callback = function(v) Config.AimLock.WallCheck = v end
+})
+OrionElements.AimLockShowFOV = AimLockTab:AddToggle({
+    Name = "Show FOV Circle",
+    Default = Config.AimLock.ShowFOV,
+    Callback = function(v) Config.AimLock.ShowFOV = v end
+})
+AimLockTab:AddDropdown({
+    Name = "Target Part",
+    Default = Config.AimLock.TargetPart,
+    Options = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "Torso"},
+    Callback = function(v) Config.AimLock.TargetPart = v end
+})
+
+-- Triggerbot Tab
+local TrigTab = Window:MakeTab({Name = "Triggerbot", Icon = "rbxassetid://4483345998"})
+OrionElements.TrigEnabled = TrigTab:AddToggle({
+    Name = "Enabled",
+    Default = Config.Triggerbot.Enabled,
+    Callback = function(v) Config.Triggerbot.Enabled = v end
+})
+TrigTab:AddBind({
+    Name = "Toggle Key",
+    Default = Config.Triggerbot.Key,
+    Hold = false,
+    Callback = function() end
+})
+OrionElements.TrigDelay = TrigTab:AddSlider({
+    Name = "Delay (Between Clicks)",
+    Min = 0.01,
+    Max = 1.0,
+    Default = Config.Triggerbot.Delay,
+    Increment = 0.01,
+    ValueName = "s",
+    Callback = function(v) Config.Triggerbot.Delay = v end
+})
+OrionElements.TrigRandom = TrigTab:AddSlider({
+    Name = "Randomize (Legit)",
+    Min = 0,
+    Max = 0.2,
+    Default = Config.Triggerbot.Randomization,
+    Increment = 0.01,
+    ValueName = "",
+    Callback = function(v) Config.Triggerbot.Randomization = v end
+})
+OrionElements.TrigMaxDist = TrigTab:AddSlider({
+    Name = "Max Distance",
+    Min = 50,
+    Max = 3000,
+    Default = Config.Triggerbot.MaxDistance,
+    Increment = 1,
+    ValueName = "m",
+    Callback = function(v) Config.Triggerbot.MaxDistance = v end
+})
+
+-- Visuals Tab
+local VisTab = Window:MakeTab({Name = "Visuals", Icon = "rbxassetid://4483345998"})
+OrionElements.VisualsEnabled = VisTab:AddToggle({
+    Name = "Enabled",
+    Default = Config.Visuals.Enabled,
+    Callback = function(v) Config.Visuals.Enabled = v end
+})
+OrionElements.VisualsTeamCheck = VisTab:AddToggle({
+    Name = "Team Check",
+    Default = Config.Visuals.TeamCheck,
+    Callback = function(v) Config.Visuals.TeamCheck = v end
+})
+OrionElements.VisualsBox = VisTab:AddToggle({
+    Name = "Box",
+    Default = Config.Visuals.Box,
+    Callback = function(v) Config.Visuals.Box = v end
+})
+VisTab:AddColorpicker({
+    Name = "Box Color",
+    Default = Color3.fromRGB(Config.Visuals.BoxColor.R, Config.Visuals.BoxColor.G, Config.Visuals.BoxColor.B),
+    Callback = function(Value)
+        Config.Visuals.BoxColor.R = math.floor(Value.R * 255)
+        Config.Visuals.BoxColor.G = math.floor(Value.G * 255)
+        Config.Visuals.BoxColor.B = math.floor(Value.B * 255)
+    end
+})
+OrionElements.VisualsNames = VisTab:AddToggle({
+    Name = "Names",
+    Default = Config.Visuals.Names,
+    Callback = function(v) Config.Visuals.Names = v end
+})
+VisTab:AddColorpicker({
+    Name = "Name Color",
+    Default = Color3.fromRGB(Config.Visuals.NameColor.R, Config.Visuals.NameColor.G, Config.Visuals.NameColor.B),
+    Callback = function(Value)
+        Config.Visuals.NameColor.R = math.floor(Value.R * 255)
+        Config.Visuals.NameColor.G = math.floor(Value.G * 255)
+        Config.Visuals.NameColor.B = math.floor(Value.B * 255)
+    end
+})
+OrionElements.VisualsInfo = VisTab:AddToggle({
+    Name = "Info",
+    Default = Config.Visuals.Info,
+    Callback = function(v) Config.Visuals.Info = v end
+})
+VisTab:AddColorpicker({
+    Name = "Info Color",
+    Default = Color3.fromRGB(Config.Visuals.InfoColor.R, Config.Visuals.InfoColor.G, Config.Visuals.InfoColor.B),
+    Callback = function(Value)
+        Config.Visuals.InfoColor.R = math.floor(Value.R * 255)
+        Config.Visuals.InfoColor.G = math.floor(Value.G * 255)
+        Config.Visuals.InfoColor.B = math.floor(Value.B * 255)
+    end
+})
+OrionElements.VisualsSkeleton = VisTab:AddToggle({
+    Name = "Skeleton",
+    Default = Config.Visuals.Skeleton,
+    Callback = function(v) Config.Visuals.Skeleton = v end
+})
+VisTab:AddColorpicker({
+    Name = "Skeleton Color",
+    Default = Color3.fromRGB(Config.Visuals.SkeletonColor.R, Config.Visuals.SkeletonColor.G, Config.Visuals.SkeletonColor.B),
+    Callback = function(Value)
+        Config.Visuals.SkeletonColor.R = math.floor(Value.R * 255)
+        Config.Visuals.SkeletonColor.G = math.floor(Value.G * 255)
+        Config.Visuals.SkeletonColor.B = math.floor(Value.B * 255)
+    end
+})
+OrionElements.VisualsHeadCircle = VisTab:AddToggle({
+    Name = "Head Circle",
+    Default = Config.Visuals.HeadCircle,
+    Callback = function(v) Config.Visuals.HeadCircle = v end
+})
+VisTab:AddColorpicker({
+    Name = "Head Circle Color",
+    Default = Color3.fromRGB(Config.Visuals.HeadCircleColor.R, Config.Visuals.HeadCircleColor.G, Config.Visuals.HeadCircleColor.B),
+    Callback = function(Value)
+        Config.Visuals.HeadCircleColor.R = math.floor(Value.R * 255)
+        Config.Visuals.HeadCircleColor.G = math.floor(Value.G * 255)
+        Config.Visuals.HeadCircleColor.B = math.floor(Value.B * 255)
+    end
+})
+OrionElements.VisualsViewLine = VisTab:AddToggle({
+    Name = "View Line",
+    Default = Config.Visuals.ViewLine,
+    Callback = function(v) Config.Visuals.ViewLine = v end
+})
+VisTab:AddColorpicker({
+    Name = "View Line Color",
+    Default = Color3.fromRGB(Config.Visuals.ViewLineColor.R, Config.Visuals.ViewLineColor.G, Config.Visuals.ViewLineColor.B),
+    Callback = function(Value)
+        Config.Visuals.ViewLineColor.R = math.floor(Value.R * 255)
+        Config.Visuals.ViewLineColor.G = math.floor(Value.G * 255)
+        Config.Visuals.ViewLineColor.B = math.floor(Value.B * 255)
+    end
+})
+OrionElements.VisualsSnaplines = VisTab:AddToggle({
+    Name = "Snaplines",
+    Default = Config.Visuals.Snaplines,
+    Callback = function(v) Config.Visuals.Snaplines = v end
+})
+VisTab:AddColorpicker({
+    Name = "Snapline Color",
+    Default = Color3.fromRGB(Config.Visuals.SnaplineColor.R, Config.Visuals.SnaplineColor.G, Config.Visuals.SnaplineColor.B),
+    Callback = function(Value)
+        Config.Visuals.SnaplineColor.R = math.floor(Value.R * 255)
+        Config.Visuals.SnaplineColor.G = math.floor(Value.G * 255)
+        Config.Visuals.SnaplineColor.B = math.floor(Value.B * 255)
+    end
+})
+OrionElements.VisualsRenderDistance = VisTab:AddSlider({
+    Name = "Render Distance",
+    Min = 100,
+    Max = 5000,
+    Default = Config.Visuals.RenderDistance,
+    Increment = 1,
+    ValueName = "m",
+    Callback = function(v) Config.Visuals.RenderDistance = v end
+})
+
+-- Movement Tab
+local MoveTab = Window:MakeTab({Name = "Movement", Icon = "rbxassetid://4483345998"})
+OrionElements.MoveEnabledWS = MoveTab:AddToggle({
+    Name = "Enable WalkSpeed",
+    Default = Config.Movement.EnabledWS,
+    Callback = function(v) Config.Movement.EnabledWS = v end
+})
+OrionElements.MoveWalkSpeed = MoveTab:AddSlider({
+    Name = "WalkSpeed",
+    Min = 16,
+    Max = 500,
+    Default = Config.Movement.WalkSpeed,
+    Increment = 1,
+    ValueName = "",
+    Callback = function(v) Config.Movement.WalkSpeed = v end
+})
+OrionElements.MoveEnabledJP = MoveTab:AddToggle({
+    Name = "Enable JumpPower",
+    Default = Config.Movement.EnabledJP,
+    Callback = function(v) Config.Movement.EnabledJP = v end
+})
+OrionElements.MoveJumpPower = MoveTab:AddSlider({
+    Name = "JumpPower",
+    Min = 50,
+    Max = 250,
+    Default = Config.Movement.JumpPower,
+    Increment = 1,
+    ValueName = "",
+    Callback = function(v) Config.Movement.JumpPower = v end
+})
+OrionElements.MoveBhop = MoveTab:AddToggle({
+    Name = "Auto-Bhop",
+    Default = Config.Movement.Bhop,
+    Callback = function(v) Config.Movement.Bhop = v end
+})
+MoveTab:AddBind({
+    Name = "Bhop Keybind",
+    Default = Config.Movement.BhopKey,
+    Hold = false,
+    Callback = function() end
+})
+
+-- Spinbot
+OrionElements.MoveSpinbot = MoveTab:AddToggle({
+    Name = "Spinbot",
+    Default = Config.Movement.Spinbot,
+    Callback = function(v) Config.Movement.Spinbot = v end
+})
+OrionElements.MoveSpinSpeed = MoveTab:AddSlider({
+    Name = "Spin Speed",
+    Min = 1,
+    Max = 200,
+    Default = Config.Movement.SpinSpeed,
+    Increment = 1,
+    ValueName = "",
+    Callback = function(v) Config.Movement.SpinSpeed = v end
+})
+
+-- No Jump Slowdown
+OrionElements.MoveNoJumpSlowdown = MoveTab:AddToggle({
+    Name = "No Jump Slowdown",
+    Default = Config.Movement.NoJumpSlowdown,
+    Callback = function(v) Config.Movement.NoJumpSlowdown = v end
+})
+
+-- Gun Mods Tab
+local GunModsTab = Window:MakeTab({Name = "Gun Mods", Icon = "rbxassetid://4483345998"})
+OrionElements.InfAmmo = GunModsTab:AddToggle({
+    Name = "Infinite Ammo",
+    Default = Config.GunMods.InfiniteAmmo,
+    Callback = function(v) Config.GunMods.InfiniteAmmo = v end
+})
+OrionElements.ReloadInterval = GunModsTab:AddSlider({
+    Name = "Reload Interval (s)",
+    Min = 0.1,
+    Max = 5.0,
+    Default = Config.GunMods.ReloadInterval,
+    Increment = 0.1,
+    ValueName = "s",
+    Callback = function(v) Config.GunMods.ReloadInterval = v end
+})
+
+-- Hitbox Tab
+local HitboxTab = Window:MakeTab({Name = "Hitbox", Icon = "rbxassetid://4483345998"})
+OrionElements.HitboxEnabled = HitboxTab:AddToggle({
+    Name = "Expand Hitbox (Aim Radius)",
+    Default = Config.Hitbox.Enabled,
+    Callback = function(v) Config.Hitbox.Enabled = v end
+})
+OrionElements.HitboxSize = HitboxTab:AddSlider({
+    Name = "Radius Multiplier (x)",
+    Min = 1,
+    Max = 10,
+    Default = Config.Hitbox.HeadSize,
+    Increment = 0.1,
+    ValueName = "x",
+    Callback = function(v) Config.Hitbox.HeadSize = v end
+})
+OrionElements.HitboxView = HitboxTab:AddToggle({
+    Name = "View Hitbox",
+    Default = Config.Hitbox.ViewHitbox,
+    Callback = function(v) Config.Hitbox.ViewHitbox = v end
+})
+HitboxTab:AddColorpicker({
+    Name = "Hitbox Color",
+    Default = Color3.fromRGB(Config.Hitbox.HitboxColor.R, Config.Hitbox.HitboxColor.G, Config.Hitbox.HitboxColor.B),
+    Callback = function(Value)
+        Config.Hitbox.HitboxColor.R = math.floor(Value.R * 255)
+        Config.Hitbox.HitboxColor.G = math.floor(Value.G * 255)
+        Config.Hitbox.HitboxColor.B = math.floor(Value.B * 255)
+    end
+})
+
+-- Settings Tab
+local SetTab = Window:MakeTab({Name = "Settings", Icon = "rbxassetid://4483345998"})
+SetTab:AddButton({
+    Name = "UNLOAD THE SCRIPT",
+    Callback = function()
+        ScriptRunning = false
+        for _, conn in pairs(Connections) do conn:Disconnect() end
+        table.clear(Connections)
+        CleanupWalkSpeedHooks()
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildWhichIsA("Humanoid")
+        if hum then hum.WalkSpeed = OriginalWalkSpeed end
+        for plr, data in pairs(ESP_Store) do
+            pcall(function()
+                data.Box:Remove(); data.BoxOutline:Remove(); data.Name:Remove()
+                data.Info:Remove(); data.HeadCircle:Remove(); data.ViewLine:Remove()
+                data.Snapline:Remove(); data.HitboxCircle:Remove()
+                for _, line in pairs(data.Skeleton) do line:Remove() end
+            end)
+        end
+        table.clear(ESP_Store)
+        if SilentAimFOVCircle then SilentAimFOVCircle:Remove() end
+        if AimLockFOVCircle then AimLockFOVCircle:Remove() end
+        if MobileGui then MobileGui:Destroy() end
+        pcall(function() RunService:UnbindFromRenderStep("AimLockCamera") end)
+        OrionLib:Destroy()
+    end
+})
+
+OrionLib:Init()
+
+-- ==================== MOBILE TOGGLE BUTTON ====================
+MobileGui = Instance.new("ScreenGui")
+MobileGui.Name = "AimLockMobileGui"
+MobileGui.ResetOnSpawn = false
+MobileGui.Enabled = Config.AimLock.AlwaysEnabled
+MobileGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+MobileButton = Instance.new("TextButton")
+MobileButton.Name = "LockToggle"
+MobileButton.Text = "LOCK OFF"
+MobileButton.Size = UDim2.new(0, 110, 0, 55)
+MobileButton.Position = UDim2.new(1, -130, 1, -130)
+MobileButton.BackgroundColor3 = Color3.fromRGB(255, 0, 128)
+MobileButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+MobileButton.Font = Enum.Font.GothamBold
+MobileButton.TextSize = 16
+MobileButton.Parent = MobileGui
+MobileButton.AutoButtonColor = false
+
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 10)
+BtnCorner.Parent = MobileButton
+
+local BtnStroke = Instance.new("UIStroke")
+BtnStroke.Color = Color3.fromRGB(255, 255, 255)
+BtnStroke.Thickness = 2
+BtnStroke.Parent = MobileButton
+
+-- Drag + Tap logic
+local isDragging = false
+local dragStartPos, buttonStartPos
+
+MobileButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        isDragging = false
+        dragStartPos = input.Position
+        buttonStartPos = MobileButton.Position
         
-        function Elements:AddSlider(Text, ConfigTable, ConfigKey, Min, Max, IsFloat)
-            local SliderFrame = Instance.new("Frame")
-            SliderFrame.Size = UDim2.new(1, 0, 0, 45)
-            SliderFrame.BackgroundColor3 = Theme.Element
-            SliderFrame.Parent = Page
-            Instance.new("UICorner", SliderFrame).CornerRadius = UDim.new(0,4)
-            local Label = Instance.new("TextLabel")
-            Label.Text = Text
-            Label.Size = UDim2.new(1, -20, 0, 20)
-            Label.Position = UDim2.new(0, 10, 0, 5)
-            Label.BackgroundTransparency = 1
-            Label.TextColor3 = Color3_fromRGB(220, 220, 220)
-            Label.Font = Enum.Font.Gotham
-            Label.TextSize = 13
-            Label.TextXAlignment = Enum.TextXAlignment.Left
-            Label.Parent = SliderFrame
-            
-            local ValueLabel = Instance.new("TextLabel")
-            ValueLabel.Text = tostring(ConfigTable[ConfigKey])
-            ValueLabel.Size = UDim2.new(0, 50, 0, 20)
-            ValueLabel.Position = UDim2.new(1, -60, 0, 5)
-            ValueLabel.BackgroundTransparency = 1
-            ValueLabel.TextColor3 = Theme.Accent
-            ValueLabel.Font = Enum.Font.GothamBold
-            ValueLabel.TextSize = 13
-            ValueLabel.TextXAlignment = Enum.TextXAlignment.Right
-            ValueLabel.Parent = SliderFrame
-            local SliderBar = Instance.new("Frame")
-            SliderBar.Size = UDim2.new(1, -20, 0, 4)
-            SliderBar.Position = UDim2.new(0, 10, 0, 30)
-            SliderBar.BackgroundColor3 = Color3_fromRGB(60, 60, 60)
-            SliderBar.BorderSizePixel = 0
-            SliderBar.Parent = SliderFrame
-            
-            local Fill = Instance.new("Frame")
-            Fill.BackgroundColor3 = Theme.Accent
-            Fill.BorderSizePixel = 0
-            Fill.Size = UDim2.new((ConfigTable[ConfigKey] - Min) / (Max - Min), 0, 1, 0)
-            Fill.Parent = SliderBar
-            
-            local Trigger = Instance.new("TextButton")
-            Trigger.BackgroundTransparency = 1
-            Trigger.Text = ""
-            Trigger.Size = UDim2.new(1, 0, 1, 0)
-            Trigger.Parent = SliderBar
-            
-            local function UpdateSlider(Input)
-                local SizeX = math.clamp((Input.Position.X - SliderBar.AbsolutePosition.X) / SliderBar.AbsoluteSize.X, 0, 1)
-                local NewValue = Min + ((Max - Min) * SizeX)
-                if not IsFloat then NewValue = Math_floor(NewValue) end
-                
-                if IsFloat then
-                    NewValue = math.floor(NewValue * 100) / 100
+        local connChanged, connInputChanged
+        
+        connChanged = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                if not isDragging then
+                    MobileLockActive = not MobileLockActive
+                    MobileButton.Text = MobileLockActive and "LOCK ON" or "LOCK OFF"
+                    MobileButton.BackgroundColor3 = MobileLockActive and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 0, 128)
                 end
-                
-                ConfigTable[ConfigKey] = NewValue
-                ValueLabel.Text = string.sub(tostring(NewValue), 1, 4)
-                Fill.Size = UDim2.new(SizeX, 0, 1, 0)
+                connChanged:Disconnect()
+                if connInputChanged then connInputChanged:Disconnect() end
             end
-            
-            local DraggingSlider = false
-            Trigger.InputBegan:Connect(function(Input) if Input.UserInputType == Enum.UserInputType.MouseButton1 then DraggingSlider = true; UpdateSlider(Input) end end)
-            UserInputService.InputChanged:Connect(function(Input) if DraggingSlider and Input.UserInputType == Enum.UserInputType.MouseMovement then UpdateSlider(Input) end end)
-            UserInputService.InputEnded:Connect(function(Input) if Input.UserInputType == Enum.UserInputType.MouseButton1 then DraggingSlider = false end end)
-        end
+        end)
         
-        function Elements:AddButton(Text, Callback)
-            local ButtonFrame = Instance.new("Frame")
-            ButtonFrame.Size = UDim2.new(1, 0, 0, 30)
-            ButtonFrame.BackgroundColor3 = Theme.Element
-            ButtonFrame.Parent = Page
-            Instance.new("UICorner", ButtonFrame).CornerRadius = UDim.new(0,4)
-            local Btn = Instance.new("TextButton")
-            Btn.Text = Text
-            Btn.Size = UDim2.new(1, 0, 1, 0)
-            Btn.BackgroundTransparency = 1
-            Btn.TextColor3 = Color3_fromRGB(255, 80, 80)
-            Btn.Font = Enum.Font.GothamBold
-            Btn.TextSize = 13
-            Btn.Parent = ButtonFrame
-            Btn.MouseButton1Click:Connect(Callback)
-        end
-        function Elements:AddKeybind(Text, ConfigTable, ConfigKey)
-            local KeyFrame = Instance.new("Frame")
-            KeyFrame.Size = UDim2.new(1, 0, 0, 30)
-            KeyFrame.BackgroundColor3 = Theme.Element
-            KeyFrame.Parent = Page
-            Instance.new("UICorner", KeyFrame).CornerRadius = UDim.new(0,4)
-            local Label = Instance.new("TextLabel")
-            Label.Text = Text
-            Label.Size = UDim2.new(0.6, 0, 1, 0)
-            Label.Position = UDim2.new(0, 10, 0, 0)
-            Label.BackgroundTransparency = 1
-            Label.TextColor3 = Color3_fromRGB(220, 220, 220)
-            Label.Font = Enum.Font.Gotham
-            Label.TextSize = 13
-            Label.TextXAlignment = Enum.TextXAlignment.Left
-            Label.Parent = KeyFrame
-            local KeyButton = Instance.new("TextButton")
-            KeyButton.Text = ConfigTable[ConfigKey].Name
-            KeyButton.Size = UDim2.new(0, 80, 0, 20)
-            KeyButton.Position = UDim2.new(1, -90, 0.5, -10)
-            KeyButton.BackgroundColor3 = Color3_fromRGB(60, 60, 60)
-            KeyButton.TextColor3 = Theme.TextActive
-            KeyButton.Font = Enum.Font.GothamBold
-            KeyButton.TextSize = 12
-            KeyButton.Parent = KeyFrame
-            Instance.new("UICorner", KeyButton).CornerRadius = UDim.new(0, 4)
-            KeyButton.MouseButton1Click:Connect(function()
-                KeyButton.Text = ". . ."
-                local InputConnection
-                InputConnection = UserInputService.InputBegan:Connect(function(input)
-                    if input.UserInputType == Enum.UserInputType.Keyboard then
-                        ConfigTable[ConfigKey] = input.KeyCode
-                        KeyButton.Text = input.KeyCode.Name
-                        InputConnection:Disconnect()
-                    elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-                        ConfigTable[ConfigKey] = Enum.UserInputType.MouseButton2
-                        KeyButton.Text = "Mouse2"
-                        InputConnection:Disconnect()
-                    end
-                end)
-            end)
-        end
-        return Elements
-    end
-    return Tabs, ScreenGui
-end
-
--- ==================== CREATE UI ====================
-local Window, GUIInstance = Library:CreateUI()
-
--- Silent Aim tab (only silent aim options)
-local SilentAimTab = Window:CreateTab("Silent Aim")
-SilentAimTab:AddToggle("Enabled", Config.SilentAim, "Enabled")
-SilentAimTab:AddToggle("Wall Check", Config.SilentAim, "WallCheck")
-SilentAimTab:AddToggle("Wall Bang", Config.SilentAim, "WallBang")
-SilentAimTab:AddSlider("FOV", Config.SilentAim, "FOV", 10, 500, false)
-SilentAimTab:AddToggle("Show FOV Circle", Config.SilentAim, "ShowFOV")
-
-local TrigTab = Window:CreateTab("Triggerbot")
-local TrigEnabledBtn = TrigTab:AddToggle("Enabled (Toggle)", Config.Triggerbot, "Enabled")
-TrigTab:AddKeybind("Toggle Key", Config.Triggerbot, "Key")
-TrigTab:AddSlider("Delay (Between Clicks)", Config.Triggerbot, "Delay", 0.01, 1.0, true)
-TrigTab:AddSlider("Randomize (Legit)", Config.Triggerbot, "Randomization", 0.0, 0.2, true)
-TrigTab:AddSlider("Max Distance", Config.Triggerbot, "MaxDistance", 50, 3000, false)
-
-local VisTab = Window:CreateTab("Visuals")
-VisTab:AddToggle("Enabled", Config.Visuals, "Enabled")
-VisTab:AddToggle("TeamCheck", Config.Visuals, "TeamCheck")
-VisTab:AddToggle("Box", Config.Visuals, "Box")
-VisTab:AddSlider("Box R", Config.Visuals.BoxColor, "R", 0, 255, false)
-VisTab:AddSlider("Box G", Config.Visuals.BoxColor, "G", 0, 255, false)
-VisTab:AddSlider("Box B", Config.Visuals.BoxColor, "B", 0, 255, false)
-VisTab:AddToggle("Names", Config.Visuals, "Names")
-VisTab:AddSlider("Name R", Config.Visuals.NameColor, "R", 0, 255, false)
-VisTab:AddSlider("Name G", Config.Visuals.NameColor, "G", 0, 255, false)
-VisTab:AddSlider("Name B", Config.Visuals.NameColor, "B", 0, 255, false)
-VisTab:AddToggle("Info", Config.Visuals, "Info")
-VisTab:AddSlider("Info R", Config.Visuals.InfoColor, "R", 0, 255, false)
-VisTab:AddSlider("Info G", Config.Visuals.InfoColor, "G", 0, 255, false)
-VisTab:AddSlider("Info B", Config.Visuals.InfoColor, "B", 0, 255, false)
-VisTab:AddToggle("Skeleton", Config.Visuals, "Skeleton")
-VisTab:AddSlider("Skel R", Config.Visuals.SkeletonColor, "R", 0, 255, false)
-VisTab:AddSlider("Skel G", Config.Visuals.SkeletonColor, "G", 0, 255, false)
-VisTab:AddSlider("Skel B", Config.Visuals.SkeletonColor, "B", 0, 255, false)
-VisTab:AddToggle("Head", Config.Visuals, "HeadCircle")
-VisTab:AddSlider("Head R", Config.Visuals.HeadCircleColor, "R", 0, 255, false)
-VisTab:AddSlider("Head G", Config.Visuals.HeadCircleColor, "G", 0, 255, false)
-VisTab:AddSlider("Head B", Config.Visuals.HeadCircleColor, "B", 0, 255, false)
-VisTab:AddToggle("ViewLine", Config.Visuals, "ViewLine")
-VisTab:AddSlider("ViewL R", Config.Visuals.ViewLineColor, "R", 0, 255, false)
-VisTab:AddSlider("ViewL G", Config.Visuals.ViewLineColor, "G", 0, 255, false)
-VisTab:AddSlider("ViewL B", Config.Visuals.ViewLineColor, "B", 0, 255, false)
-VisTab:AddToggle("Snaplines", Config.Visuals, "Snaplines")
-VisTab:AddSlider("Snap R", Config.Visuals.SnaplineColor, "R", 0, 255, false)
-VisTab:AddSlider("Snap G", Config.Visuals.SnaplineColor, "G", 0, 255, false)
-VisTab:AddSlider("Snap B", Config.Visuals.SnaplineColor, "B", 0, 255, false)
-VisTab:AddSlider("Distance", Config.Visuals, "RenderDistance", 100, 5000, false)
-
-local MoveTab = Window:CreateTab("Movement")
-MoveTab:AddToggle("Enable WalkSpeed", Config.Movement, "EnabledWS")
-MoveTab:AddSlider("WalkSpeed", Config.Movement, "WalkSpeed", 16, 100, false)
-MoveTab:AddToggle("Enable JumpPower", Config.Movement, "EnabledJP")
-MoveTab:AddSlider("JumpPower", Config.Movement, "JumpPower", 50, 250, false)
-local BhopEnabledBtn = MoveTab:AddToggle("Auto-Bhop", Config.Movement, "Bhop")
-MoveTab:AddKeybind("Bhop Keybind", Config.Movement, "BhopKey")
-
-local GunModsTab = Window:CreateTab("Gun Mods")
-local InfAmmoBtn = GunModsTab:AddToggle("Infinite Ammo", Config.GunMods, "InfiniteAmmo")
-GunModsTab:AddSlider("Reload Interval (s)", Config.GunMods, "ReloadInterval", 0.1, 5.0, true)
-
-local HitboxTab = Window:CreateTab("Hitbox")
-HitboxTab:AddToggle("Expand Hitbox", Config.Hitbox, "Enabled")
-HitboxTab:AddSlider("Head Size (studs)", Config.Hitbox, "HeadSize", 10, 200, false)
-HitboxTab:AddToggle("View Hitbox", Config.Hitbox, "ViewHitbox")
-HitboxTab:AddSlider("View R", Config.Hitbox.HitboxColor, "R", 0, 255, false)
-HitboxTab:AddSlider("View G", Config.Hitbox.HitboxColor, "G", 0, 255, false)
-HitboxTab:AddSlider("View B", Config.Hitbox.HitboxColor, "B", 0, 255, false)
-
-local SetTab = Window:CreateTab("Settings")
-SetTab:AddButton("UNLOAD THE SCRIPT", function()
-    ScriptRunning = false
-    for _, conn in pairs(Connections) do conn:Disconnect() end
-    table.clear(Connections)
-    for plr, data in pairs(ESP_Store) do
-        pcall(function()
-            data.Box:Remove(); data.BoxOutline:Remove(); data.Name:Remove()
-            data.Info:Remove(); data.HeadCircle:Remove(); data.ViewLine:Remove()
-            data.Snapline:Remove(); data.HitboxCircle:Remove()
-            for _, line in pairs(data.Skeleton) do line:Remove() end
+        connInputChanged = UserInputService.InputChanged:Connect(function(changedInput)
+            if changedInput == input then
+                local delta = (input.Position - dragStartPos).Magnitude
+                if delta > 5 then
+                    isDragging = true
+                end
+                if isDragging then
+                    local dPos = input.Position - dragStartPos
+                    MobileButton.Position = UDim2.new(
+                        buttonStartPos.X.Scale, buttonStartPos.X.Offset + dPos.X,
+                        buttonStartPos.Y.Scale, buttonStartPos.Y.Offset + dPos.Y
+                    )
+                end
+            end
         end)
     end
-    table.clear(ESP_Store)
-    if SilentAimFOVCircle then SilentAimFOVCircle:Remove() end
-    for _, ui in pairs(UI_Store) do ui:Destroy() end
 end)
 
--- ==================== KEYBIND HANDLING (global) ====================
-table.insert(Connections, UserInputService.InputBegan:Connect(function(input)
-    if input.KeyCode == Config.Global.Keybind then
-        Config.Global.MenuOpen = not Config.Global.MenuOpen
-        if MainFrameInstance then
-            MainFrameInstance.Visible = Config.Global.MenuOpen
+-- ==================== KEYBIND HANDLING ====================
+local function InputMatches(input, key)
+    if typeof(key) == "EnumItem" then
+        if key.EnumType == Enum.KeyCode then
+            return input.KeyCode == key
+        elseif key.EnumType == Enum.UserInputType then
+            return input.UserInputType == key
         end
     end
-    
+    return false
+end
+
+table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if InputMatches(input, CurrentKey) then
+        AimLockHeld = true
+    end
+
     if input.KeyCode == Config.Triggerbot.Key then
         Config.Triggerbot.Enabled = not Config.Triggerbot.Enabled
-        local Color = Config.Triggerbot.Enabled and Theme.Accent or Color3_fromRGB(60, 60, 60)
-        TweenService:Create(TrigEnabledBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color}):Play()
         if Config.Triggerbot.Enabled then
-            SendNotification("Triggerbot: ENABLED", Theme.Accent)
+            SendNotification("Triggerbot: ENABLED")
         else
-            SendNotification("Triggerbot: DISABLED", Color3_fromRGB(255, 50, 50))
+            SendNotification("Triggerbot: DISABLED")
         end
     end
+
     if input.KeyCode == Config.Movement.BhopKey then
         Config.Movement.Bhop = not Config.Movement.Bhop
-        local Color = Config.Movement.Bhop and Theme.Accent or Color3_fromRGB(60, 60, 60)
-        if BhopEnabledBtn then
-            TweenService:Create(BhopEnabledBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color}):Play()
-        end
         if Config.Movement.Bhop then
-            SendNotification("Auto-Bhop: ENABLED", Theme.Accent)
+            SendNotification("Auto-Bhop: ENABLED")
         else
-            SendNotification("Auto-Bhop: DISABLED", Color3_fromRGB(255, 50, 50))
+            SendNotification("Auto-Bhop: DISABLED")
         end
+    end
+end))
+
+table.insert(Connections, UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if InputMatches(input, CurrentKey) then
+        AimLockHeld = false
     end
 end))
 
@@ -568,7 +700,7 @@ local GlobalRaycastParams = RaycastParams.new()
 GlobalRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
 GlobalRaycastParams.IgnoreWater = true
 
--- Silent aim FOV circle (only one circle now)
+-- FOV circles
 local SilentAimFOVCircle = Drawing.new("Circle")
 SilentAimFOVCircle.Visible = Config.SilentAim.ShowFOV
 SilentAimFOVCircle.Thickness = Config.FOV_Circle.Thickness
@@ -577,15 +709,23 @@ SilentAimFOVCircle.Transparency = Config.FOV_Circle.Transparency
 SilentAimFOVCircle.Filled = false
 SilentAimFOVCircle.NumSides = Config.FOV_Circle.NumSides
 
--- Silent aim hooks (unchanged)
+local AimLockFOVCircle = Drawing.new("Circle")
+AimLockFOVCircle.Visible = false
+AimLockFOVCircle.Thickness = Config.FOV_Circle.Thickness
+AimLockFOVCircle.Color = Config.AimLock.FOVColor
+AimLockFOVCircle.Transparency = Config.FOV_Circle.Transparency
+AimLockFOVCircle.Filled = false
+AimLockFOVCircle.NumSides = Config.FOV_Circle.NumSides
+
+-- ==================== SILENT AIM HOOKS ====================
 local function ApplySilentAimHooks()
     local rawmt = getrawmetatable and getrawmetatable(game)
     local setreadonly = setreadonly or make_writeable
-    
+
     if rawmt and setreadonly then
-        local Success, Error = pcall(function()
+        pcall(function()
             setreadonly(rawmt, false)
-            
+
             local old_index = rawmt.__index
             rawmt.__index = newcclosure(function(self, key)
                 if not checkcaller() and Config.SilentAim.Enabled and SilentAimTarget then
@@ -614,7 +754,7 @@ local function ApplySilentAimHooks()
                 end
                 return old_index(self, key)
             end)
-            
+
             local old_namecall = rawmt.__namecall
             rawmt.__namecall = newcclosure(function(self, ...)
                 local method = getnamecallmethod and getnamecallmethod()
@@ -650,11 +790,11 @@ local function ApplySilentAimHooks()
                 end
                 return old_namecall(self, ...)
             end)
-            
+
             setreadonly(rawmt, true)
         end)
     end
-    
+
     pcall(function()
         if hookmetamethod then
             local old_index
@@ -685,7 +825,7 @@ local function ApplySilentAimHooks()
                 end
                 return old_index(self, key)
             end))
-            
+
             local old_namecall
             old_namecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
                 local method = getnamecallmethod and getnamecallmethod()
@@ -725,7 +865,7 @@ local function ApplySilentAimHooks()
     end)
 end
 
--- Helper functions
+-- ==================== HELPERS ====================
 local function GetCharacterRoot(Char)
     if not Char then return nil end
     return Char.PrimaryPart or Char:FindFirstChild("HumanoidRootPart") or Char:FindFirstChild("Torso") or Char:FindFirstChild("UpperTorso")
@@ -767,7 +907,7 @@ local function CheckVisibility(targetPart, targetCharacter)
     return Result == nil 
 end
 
--- ESP drawing
+-- ==================== ESP DRAWING ====================
 local function InitializeDrawing(plr)
     if ESP_Store[plr] then return end
     local Objects = {
@@ -813,7 +953,7 @@ local R6_Links = {
     {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
 }
 
--- Triggerbot
+-- ==================== TRIGGERBOT ====================
 task.spawn(function()
     while ScriptRunning do
         local DidFire = false
@@ -844,7 +984,7 @@ task.spawn(function()
     end
 end)
 
--- Gun Mods: Infinite ammo
+-- ==================== GUN MODS ====================
 local WeaponRemote = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("Weapons")
 task.spawn(function()
     while ScriptRunning do
@@ -857,72 +997,166 @@ task.spawn(function()
     end
 end)
 
--- ==================== MAIN RENDER LOOP (SILENT AIM ONLY) ====================
+-- ==================== HITBOX ====================
+local OriginalHeadSizes = {}
+local function StoreOriginalHeadSize(plr)
+    if not plr or plr == LocalPlayer then return end
+    local char = plr.Character
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if head then
+        OriginalHeadSizes[plr] = head.Size
+    end
+end
+local function RestoreOriginalHeadSize(plr)
+    if not OriginalHeadSizes[plr] then return end
+    local char = plr.Character
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if head then
+        pcall(function()
+            head.Size = OriginalHeadSizes[plr]
+        end)
+    end
+    OriginalHeadSizes[plr] = nil
+end
+
+-- ==================== PLAYER LIFECYCLE ====================
+local function onPlayerAdded(plr)
+    if plr == LocalPlayer then return end
+    local function onCharAdded(char)
+        task.wait(0.5)
+        StoreOriginalHeadSize(plr)
+        InitializeDrawing(plr)
+    end
+    local function onCharRemoving(char)
+        ClearDrawing(plr)
+        RestoreOriginalHeadSize(plr)
+    end
+    plr.CharacterAdded:Connect(onCharAdded)
+    plr.CharacterRemoving:Connect(onCharRemoving)
+    if plr.Character then
+        onCharAdded(plr.Character)
+    end
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    onPlayerAdded(plr)
+end
+table.insert(Connections, Players.PlayerAdded:Connect(onPlayerAdded))
+table.insert(Connections, Players.PlayerRemoving:Connect(function(plr)
+    ClearDrawing(plr)
+    RestoreOriginalHeadSize(plr)
+end))
+
+-- ==================== WALKSPEED PROPERTY HOOK (NEW METHOD) ====================
+local OriginalWalkSpeed = 16
+local WalkSpeedHooks = {}
+
+local function HookWalkSpeed(hum)
+    if not hum or WalkSpeedHooks[hum] then return end
+    WalkSpeedHooks[hum] = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+        if Config.Movement.EnabledWS and hum.WalkSpeed ~= Config.Movement.WalkSpeed then
+            hum.WalkSpeed = Config.Movement.WalkSpeed
+        end
+    end)
+end
+
+local function CleanupWalkSpeedHooks()
+    for hum, conn in pairs(WalkSpeedHooks) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(WalkSpeedHooks)
+end
+
+-- Hook current humanoid if already in game
+if LocalPlayer.Character then
+    local hum = LocalPlayer.Character:FindFirstChildWhichIsA("Humanoid")
+    if hum then 
+        OriginalWalkSpeed = hum.WalkSpeed
+        HookWalkSpeed(hum) 
+    end
+end
+
+-- Hook future humanoids after respawn
+table.insert(Connections, LocalPlayer.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid", 2)
+    if hum then 
+        OriginalWalkSpeed = hum.WalkSpeed
+        HookWalkSpeed(hum) 
+    end
+end))
+
+-- ==================== AIM LOCK ACTIVE CHECK ====================
+local function IsLockActive()
+    local mobileActive = Config.AimLock.AlwaysEnabled and MobileLockActive
+    local bindActive = Config.AimLock.BindEnabled and AimLockHeld
+    return mobileActive or bindActive
+end
+
+-- ==================== MAIN RENDER LOOP ====================
 local function MainRender()
     if not ScriptRunning then return end
-    
-    -- Expand head hitboxes
-    if Config.Hitbox.Enabled then
-        for _, v in next, Players:GetPlayers() do
-            if v ~= LocalPlayer and v.Character then
-                pcall(function()
-                    local head = v.Character:FindFirstChild("Head")
-                    if head then
-                        head.Size = Vector3.new(Config.Hitbox.HeadSize, Config.Hitbox.HeadSize, Config.Hitbox.HeadSize)
-                        head.Transparency = 0.7
-                        head.BrickColor = BrickColor.new("Really blue")
-                        head.Material = "Neon"
-                        head.CanCollide = false
-                    end
-                end)
-            end
-        end
-    end
-    
+
     local MouseLoc = UserInputService:GetMouseLocation()
     local ViewportSize = Camera.ViewportSize
     local ScreenBottom = Vector2_new(ViewportSize.X / 2, ViewportSize.Y)
-    
-    -- Update silent aim FOV circle
+    local ScreenCenter = Vector2_new(ViewportSize.X / 2, ViewportSize.Y / 2)
+
+    -- Update FOV circles
     SilentAimFOVCircle.Position = MouseLoc
     SilentAimFOVCircle.Radius = Config.SilentAim.FOV
     SilentAimFOVCircle.Visible = Config.SilentAim.ShowFOV
-    
+
+    AimLockFOVCircle.Position = ScreenCenter
+    AimLockFOVCircle.Radius = Config.AimLock.FOV
+    AimLockFOVCircle.Visible = Config.AimLock.ShowFOV
+
     local silentBest = nil
     local silentBestDist = Config.SilentAim.FOV
-    
+
+    local aimLockBest = nil
+    local aimLockBestDist = Config.AimLock.FOV
+
     local AllPlayers = Players:GetPlayers()
     for i = 1, #AllPlayers do
         local plr = AllPlayers[i]
         if plr == LocalPlayer then continue end
         local D = ESP_Store[plr]
         if not D then InitializeDrawing(plr); D = ESP_Store[plr] end
-        
+
         local Char = plr.Character
         if not Char then HideAll(D); continue end
-        
+
         local Root = GetCharacterRoot(Char)
         local Head = Char:FindFirstChild("Head")
         if not Root or not Head then HideAll(D); continue end
-        
+
         local RootPos3D = Root.Position
         local Dist = (RootPos3D - Camera.CFrame.Position).Magnitude
         if Dist > Config.Visuals.RenderDistance then HideAll(D); continue end
         if not IsEnemy(plr) then HideAll(D); continue end
-        
+
         local Hum = GetCharacterHumanoid(Char)
         local HP = (Hum and Hum.Health) or 100
         if Hum and Hum.Health <= 0 then HideAll(D); continue end
-        
+
         local RootPos, RootVis = WTVP(Camera, RootPos3D)
         if not RootVis then HideAll(D); continue end
-        
-        -- Screen positions
+
+        local SilentPart = Char:FindFirstChild(Config.SilentAim.AimPart) or Head
+        local LockPart = Char:FindFirstChild(Config.AimLock.TargetPart) or Head
+
         local HeadScreenPos, OnScreen = WTVP(Camera, Head.Position)
+        local SilentScreenPos, SilentOnScreen = WTVP(Camera, SilentPart.Position)
+        local LockScreenPos, LockOnScreen = WTVP(Camera, LockPart.Position)
+
+        local baseRadius = math.max(Head.Size.X, Head.Size.Y, Head.Size.Z) / 2
+        local expandedRadius = baseRadius * Config.Hitbox.HeadSize
         local screenRadius = 0
+        
         if OnScreen then
-            local headSize = Head.Size
-            local worldRadius = math.max(headSize.X, headSize.Y, headSize.Z) / 2
+            local worldRadius = Config.Hitbox.Enabled and expandedRadius or baseRadius
             local rightVec = Camera.CFrame.RightVector * worldRadius
             local leftEdge = Head.Position - rightVec
             local rightEdge = Head.Position + rightVec
@@ -932,15 +1166,15 @@ local function MainRender()
                 screenRadius = (Vector2_new(rightScreen.X, rightScreen.Y) - Vector2_new(leftScreen.X, leftScreen.Y)).Magnitude / 2
             end
         end
-        
+
         local IsVisible = false
-        if Config.Visuals.Enabled or Config.SilentAim.Enabled then
+        if Config.Visuals.Enabled or Config.SilentAim.Enabled or IsLockActive() then
             IsVisible = CheckVisibility(Head, Char)
         end
-        
+
         -- Silent aim target selection
-        if Config.SilentAim.Enabled and OnScreen then
-            local magToCenter = (Vector2_new(HeadScreenPos.X, HeadScreenPos.Y) - MouseLoc).Magnitude
+        if Config.SilentAim.Enabled and SilentOnScreen then
+            local magToCenter = (Vector2_new(SilentScreenPos.X, SilentScreenPos.Y) - MouseLoc).Magnitude
             local distToCircle = math.max(0, magToCenter - screenRadius)
             if distToCircle < silentBestDist then
                 local passWall = true
@@ -948,54 +1182,70 @@ local function MainRender()
                     passWall = IsVisible
                 end
                 if passWall then
-                    silentBest = Head
+                    silentBest = SilentPart
                     silentBestDist = distToCircle
                 end
             end
         end
-        
-        -- ESP drawing (unchanged)
+
+        -- Aim Lock target selection
+        if IsLockActive() and LockOnScreen then
+            local magToCenter = (Vector2_new(LockScreenPos.X, LockScreenPos.Y) - ScreenCenter).Magnitude
+            local distToCircle = math.max(0, magToCenter - screenRadius)
+            if distToCircle < aimLockBestDist then
+                local passWall = true
+                if Config.AimLock.WallCheck then
+                    passWall = IsVisible
+                end
+                if passWall then
+                    aimLockBest = LockPart
+                    aimLockBestDist = distToCircle
+                end
+            end
+        end
+
+        -- ESP drawing
         if Config.Visuals.Enabled then
             local IsR15 = (Char:FindFirstChild("UpperTorso") ~= nil)
             local ScaleFactor = 1000 / Dist
             local BoxSizeY = (IsR15 and 5.5 or 5.0) * ScaleFactor
             local BoxSizeX = 3.5 * ScaleFactor
             local BoxPos = Vector2_new(RootPos.X - BoxSizeX/2, RootPos.Y - BoxSizeY/2)
-            
+
             if Config.Visuals.Box then
                 if Config.Visuals.BoxOutline then D.BoxOutline.Size = Vector2_new(BoxSizeX, BoxSizeY); D.BoxOutline.Position = BoxPos; D.BoxOutline.Visible = true else D.BoxOutline.Visible = false end
                 D.Box.Size = Vector2_new(BoxSizeX, BoxSizeY); D.Box.Position = BoxPos
                 D.Box.Color = Color3_fromRGB(Config.Visuals.BoxColor.R, Config.Visuals.BoxColor.G, Config.Visuals.BoxColor.B)
                 D.Box.Visible = true
             else D.Box.Visible = false; D.BoxOutline.Visible = false end
-            
+
             if Config.Visuals.Names then
                 D.Name.Text = plr.Name
                 D.Name.Position = Vector2_new(RootPos.X, BoxPos.Y - 18)
                 D.Name.Color = Color3_fromRGB(Config.Visuals.NameColor.R, Config.Visuals.NameColor.G, Config.Visuals.NameColor.B)
                 D.Name.Visible = true
             else D.Name.Visible = false end
-            
+
             if Config.Visuals.Info then
                 D.Info.Text = Math_floor(HP) .. " HP | " .. Math_floor(Dist) .. "m"
                 D.Info.Position = Vector2_new(RootPos.X, BoxPos.Y + BoxSizeY + 4)
                 D.Info.Color = Color3_fromRGB(Config.Visuals.InfoColor.R, Config.Visuals.InfoColor.G, Config.Visuals.InfoColor.B)
                 D.Info.Visible = true
             else D.Info.Visible = false end
-            
+
             if Config.Visuals.Snaplines then
                 D.Snapline.From = ScreenBottom; D.Snapline.To = Vector2_new(RootPos.X, RootPos.Y)
                 D.Snapline.Color = Color3_fromRGB(Config.Visuals.SnaplineColor.R, Config.Visuals.SnaplineColor.G, Config.Visuals.SnaplineColor.B)
                 D.Snapline.Visible = true
             else D.Snapline.Visible = false end
-            
+
             if Config.Visuals.HeadCircle and OnScreen then
                 D.HeadCircle.Position = Vector2_new(HeadScreenPos.X, HeadScreenPos.Y)
                 D.HeadCircle.Radius = screenRadius > 0 and screenRadius or (ScaleFactor * 0.8)
                 D.HeadCircle.Color = Color3_fromRGB(Config.Visuals.HeadCircleColor.R, Config.Visuals.HeadCircleColor.G, Config.Visuals.HeadCircleColor.B)
                 D.HeadCircle.Visible = true
             else D.HeadCircle.Visible = false end
-            
+
             if Config.Visuals.ViewLine and OnScreen then
                 local endPos = Head.Position + (Head.CFrame.LookVector * 5)
                 local endScreen, endVis = WTVP(Camera, endPos)
@@ -1006,7 +1256,7 @@ local function MainRender()
                     D.ViewLine.Visible = true
                 else D.ViewLine.Visible = false end
             else D.ViewLine.Visible = false end
-            
+
             if Config.Visuals.Skeleton then
                 local Links = IsR15 and R15_Links or R6_Links
                 for idx, link in ipairs(Links) do
@@ -1023,8 +1273,8 @@ local function MainRender()
                     elseif lObj then lObj.Visible = false end
                 end
             else for _, line in ipairs(D.Skeleton) do line.Visible = false end end
-            
-            if Config.Hitbox.ViewHitbox and Config.Hitbox.Enabled and OnScreen and screenRadius > 0 then
+
+            if Config.Hitbox.ViewHitbox and OnScreen and screenRadius > 0 then
                 D.HitboxCircle.Position = Vector2_new(HeadScreenPos.X, HeadScreenPos.Y)
                 D.HitboxCircle.Radius = screenRadius
                 D.HitboxCircle.Color = Color3_fromRGB(Config.Hitbox.HitboxColor.R, Config.Hitbox.HitboxColor.G, Config.Hitbox.HitboxColor.B)
@@ -1034,22 +1284,113 @@ local function MainRender()
             HideAll(D)
         end
     end
-    
+
     SilentAimTarget = silentBest
-    
-    -- Movement
+    AimLockTarget = aimLockBest
+
+    -- Movement (JumpPower only — WalkSpeed handled in Heartbeat)
     local Hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
     if Hum then
-        if Config.Movement.EnabledWS then Hum.WalkSpeed = Config.Movement.WalkSpeed end
         if Config.Movement.EnabledJP then Hum.JumpPower = Config.Movement.JumpPower end
-        if Config.Movement.Bhop then
-            if UserInputService:IsKeyDown(Enum.KeyCode.Space) and Hum.FloorMaterial ~= Enum.Material.Air then
-                Hum.Jump = true
-            end
-        end
     end
 end
 
+-- ==================== WALKSPEED + BHOP + SPINBOT + HITBOX + NO JUMP SLOWDOWN HEARTBEAT ====================
+table.insert(Connections, RunService.Heartbeat:Connect(function()
+    if not ScriptRunning then return end
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+    
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if not hum then return end
+    
+    -- WalkSpeed (unconditional set + property hook prevents game from reverting)
+    if Config.Movement.EnabledWS then
+        hum.WalkSpeed = Config.Movement.WalkSpeed
+    end
+    
+    -- No Jump Slowdown — forces speed while airborne so games can't reduce it
+    if Config.Movement.NoJumpSlowdown then
+        if hum.FloorMaterial == Enum.Material.Air then
+            local targetSpeed = Config.Movement.EnabledWS and Config.Movement.WalkSpeed or OriginalWalkSpeed
+            hum.WalkSpeed = targetSpeed
+        end
+    end
+    
+    -- Auto-Bhop
+    if Config.Movement.Bhop then
+        if hum.FloorMaterial ~= Enum.Material.Air then
+            hum.Jump = true
+        end
+    end
+    
+    -- Spinbot
+    if Config.Movement.Spinbot and char:FindFirstChild("HumanoidRootPart") then
+        local hrp = char.HumanoidRootPart
+        local spinAmount = Config.Movement.SpinSpeed * 0.1
+        hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinAmount), 0)
+    end
+    
+    -- ==================== HITBOX EXPANDER ====================
+    if Config.Hitbox.Enabled then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr == LocalPlayer then continue end
+            local targetChar = plr.Character
+            if not targetChar then continue end
+            local head = targetChar:FindFirstChild("Head")
+            if not head then continue end
+            
+            if not OriginalHeadSizes[plr] then
+                OriginalHeadSizes[plr] = head.Size
+            end
+            
+            local targetSize = OriginalHeadSizes[plr] * Config.Hitbox.HeadSize
+            if head.Size ~= targetSize then
+                head.Size = targetSize
+            end
+        end
+    else
+        for plr, origSize in pairs(OriginalHeadSizes) do
+            local targetChar = plr.Character
+            if targetChar then
+                local head = targetChar:FindFirstChild("Head")
+                if head then
+                    pcall(function() head.Size = origSize end)
+                end
+            end
+            OriginalHeadSizes[plr] = nil
+        end
+    end
+end))
+
+-- ==================== AIM LOCK CAMERA (PRIORITY 999) ====================
+RunService:BindToRenderStep("AimLockCamera", 999, function()
+    if not ScriptRunning then return end
+    
+    if IsLockActive() and AimLockTarget then
+        local targetPos = AimLockTarget.Position
+        local currentCF = Camera.CFrame
+        local targetCF = CFrame_lookAt(currentCF.Position, targetPos)
+        
+        local now = tick()
+        local dt = now - lastCameraTick
+        lastCameraTick = now
+        dt = math.clamp(dt, 0.0001, 0.1)
+        
+        local speed = Config.AimLock.Smoothness * 100
+        local alpha = 1 - math.exp(-speed * dt)
+        alpha = math.clamp(alpha, 0, 1)
+        
+        if Config.AimLock.Smoothness >= 0.99 then
+            alpha = 1
+        end
+        
+        Camera.CFrame = currentCF:Lerp(targetCF, alpha)
+    else
+        lastCameraTick = tick()
+    end
+end)
+
 ApplySilentAimHooks()
 table.insert(Connections, RunService.RenderStepped:Connect(MainRender))
-table.insert(Connections, Players.PlayerRemoving:Connect(ClearDrawing))
