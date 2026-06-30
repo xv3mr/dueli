@@ -143,7 +143,6 @@ local Config = {
     Hitbox = {
         Enabled = false,
         HeadSize = 2,
-        ViewHitbox = false,
         HitboxColor = {R=255, G=0, B=0},
     }
 }
@@ -522,26 +521,21 @@ OrionElements.ReloadInterval = GunModsTab:AddSlider({
     Callback = function(v) Config.GunMods.ReloadInterval = v end
 })
 
--- Hitbox Tab
+-- Hitbox Tab (View Hitbox removed)
 local HitboxTab = Window:MakeTab({Name = "Hitbox", Icon = "rbxassetid://4483345998"})
 OrionElements.HitboxEnabled = HitboxTab:AddToggle({
-    Name = "Expand Hitbox (Aim Radius)",
+    Name = "Expand Hitbox",
     Default = Config.Hitbox.Enabled,
     Callback = function(v) Config.Hitbox.Enabled = v end
 })
 OrionElements.HitboxSize = HitboxTab:AddSlider({
-    Name = "Radius Multiplier (x)",
+    Name = "Size Multiplier",
     Min = 1,
     Max = 10,
     Default = Config.Hitbox.HeadSize,
     Increment = 0.1,
     ValueName = "x",
     Callback = function(v) Config.Hitbox.HeadSize = v end
-})
-OrionElements.HitboxView = HitboxTab:AddToggle({
-    Name = "View Hitbox",
-    Default = Config.Hitbox.ViewHitbox,
-    Callback = function(v) Config.Hitbox.ViewHitbox = v end
 })
 HitboxTab:AddColorpicker({
     Name = "Hitbox Color",
@@ -562,13 +556,14 @@ SetTab:AddButton({
         for _, conn in pairs(Connections) do conn:Disconnect() end
         table.clear(Connections)
         CleanupWalkSpeedHooks()
+        CleanupHitboxHooks()
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildWhichIsA("Humanoid")
         if hum then hum.WalkSpeed = OriginalWalkSpeed end
         for plr, data in pairs(ESP_Store) do
             pcall(function()
                 data.Box:Remove(); data.BoxOutline:Remove(); data.Name:Remove()
                 data.Info:Remove(); data.HeadCircle:Remove(); data.ViewLine:Remove()
-                data.Snapline:Remove(); data.HitboxCircle:Remove()
+                data.Snapline:Remove()
                 for _, line in pairs(data.Skeleton) do line:Remove() end
             end)
         end
@@ -913,7 +908,7 @@ local function InitializeDrawing(plr)
     local Objects = {
         BoxOutline = Drawing.new("Square"), Box = Drawing.new("Square"), Name = Drawing.new("Text"),
         Info = Drawing.new("Text"), HeadCircle = Drawing.new("Circle"), ViewLine = Drawing.new("Line"),
-        Snapline = Drawing.new("Line"), HitboxCircle = Drawing.new("Circle"), Skeleton = {}
+        Snapline = Drawing.new("Line"), Skeleton = {}
     }
     Objects.BoxOutline.Visible = false; Objects.BoxOutline.Filled = false; Objects.BoxOutline.Thickness = 3; Objects.BoxOutline.Color = Color3_fromRGB(0,0,0); Objects.BoxOutline.Transparency = 0.5
     Objects.Box.Visible = false; Objects.Box.Filled = false; Objects.Box.Thickness = 1
@@ -922,13 +917,12 @@ local function InitializeDrawing(plr)
     Objects.HeadCircle.Visible = false; Objects.HeadCircle.Filled = false; Objects.HeadCircle.Thickness = 1.5
     Objects.ViewLine.Visible = false; Objects.ViewLine.Thickness = 1
     Objects.Snapline.Visible = false; Objects.Snapline.Thickness = 1.5
-    Objects.HitboxCircle.Visible = false; Objects.HitboxCircle.Filled = false; Objects.HitboxCircle.Thickness = 1.5
     for i=1,16 do local Line = Drawing.new("Line"); Line.Visible = false; Line.Thickness = 1.5; table.insert(Objects.Skeleton, Line) end
     ESP_Store[plr] = Objects
 end
 local function HideAll(D)
     D.Box.Visible = false; D.BoxOutline.Visible = false; D.Name.Visible = false; D.Info.Visible = false
-    D.HeadCircle.Visible = false; D.ViewLine.Visible = false; D.Snapline.Visible = false; D.HitboxCircle.Visible = false
+    D.HeadCircle.Visible = false; D.ViewLine.Visible = false; D.Snapline.Visible = false
     for _, line in ipairs(D.Skeleton) do line.Visible = false end
 end
 local function ClearDrawing(plr)
@@ -936,7 +930,7 @@ local function ClearDrawing(plr)
     local D = ESP_Store[plr]
     pcall(function()
         D.Box:Remove(); D.BoxOutline:Remove(); D.Name:Remove(); D.Info:Remove(); D.HeadCircle:Remove()
-        D.ViewLine:Remove(); D.Snapline:Remove(); D.HitboxCircle:Remove()
+        D.ViewLine:Remove(); D.Snapline:Remove()
         for _, line in pairs(D.Skeleton) do line:Remove() end
     end)
     ESP_Store[plr] = nil
@@ -984,12 +978,20 @@ task.spawn(function()
     end
 end)
 
--- ==================== GUN MODS ====================
-local WeaponRemote = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("Weapons")
+-- ==================== GUN MODS (FIXED - no hanging) ====================
 task.spawn(function()
     while ScriptRunning do
         if Config.GunMods.InfiniteAmmo then
-            pcall(function() WeaponRemote:FireServer("Reload") end)
+            pcall(function()
+                local ReplicatedStorage = game:GetService("ReplicatedStorage")
+                local Events = ReplicatedStorage:FindFirstChild("Events")
+                if Events then
+                    local Weapons = Events:FindFirstChild("Weapons")
+                    if Weapons then
+                        Weapons:FireServer("Reload")
+                    end
+                end
+            end)
             task.wait(Config.GunMods.ReloadInterval)
         else
             task.wait(0.5)
@@ -997,28 +999,72 @@ task.spawn(function()
     end
 end)
 
--- ==================== HITBOX ====================
-local OriginalHeadSizes = {}
-local function StoreOriginalHeadSize(plr)
-    if not plr or plr == LocalPlayer then return end
-    local char = plr.Character
-    if not char then return end
-    local head = char:FindFirstChild("Head")
-    if head then
-        OriginalHeadSizes[plr] = head.Size
+-- ==================== HITBOX (FIXED - no collision freeze) ====================
+local OriginalHeadData = {} -- stores {Size, Massless, CanCollide} per head instance
+local HitboxConnections = {}
+
+local function CleanupHitboxHooks()
+    for plr, conn in pairs(HitboxConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(HitboxConnections)
+end
+
+local function ExpandHitbox(head)
+    if not head or not Config.Hitbox.Enabled then return end
+    if not OriginalHeadData[head] then
+        OriginalHeadData[head] = {
+            Size = head.Size,
+            Massless = head.Massless,
+            CanCollide = head.CanCollide
+        }
+    end
+    local targetSize = OriginalHeadData[head].Size * Config.Hitbox.HeadSize
+    if head.Size ~= targetSize then
+        head.Size = targetSize
+    end
+    if not head.Massless then
+        head.Massless = true
+    end
+    if head.CanCollide then
+        head.CanCollide = false
     end
 end
-local function RestoreOriginalHeadSize(plr)
-    if not OriginalHeadSizes[plr] then return end
-    local char = plr.Character
-    if not char then return end
-    local head = char:FindFirstChild("Head")
-    if head then
-        pcall(function()
-            head.Size = OriginalHeadSizes[plr]
-        end)
+
+local function RestoreHitbox(head)
+    if not head or not OriginalHeadData[head] then return end
+    local data = OriginalHeadData[head]
+    pcall(function()
+        head.Size = data.Size
+        head.Massless = data.Massless
+        head.CanCollide = data.CanCollide
+    end)
+    OriginalHeadData[head] = nil
+end
+
+local function SetupHitboxForPlayer(plr)
+    if plr == LocalPlayer then return end
+    if HitboxConnections[plr] then
+        pcall(function() HitboxConnections[plr]:Disconnect() end)
+        HitboxConnections[plr] = nil
     end
-    OriginalHeadSizes[plr] = nil
+    
+    local char = plr.Character
+    if char then
+        local head = char:FindFirstChild("Head")
+        if head then
+            ExpandHitbox(head)
+        end
+    end
+    
+    HitboxConnections[plr] = plr.CharacterAdded:Connect(function(newChar)
+        task.wait(0.3)
+        if not ScriptRunning then return end
+        local newHead = newChar:FindFirstChild("Head")
+        if newHead then
+            ExpandHitbox(newHead)
+        end
+    end)
 end
 
 -- ==================== PLAYER LIFECYCLE ====================
@@ -1026,12 +1072,15 @@ local function onPlayerAdded(plr)
     if plr == LocalPlayer then return end
     local function onCharAdded(char)
         task.wait(0.5)
-        StoreOriginalHeadSize(plr)
+        SetupHitboxForPlayer(plr)
         InitializeDrawing(plr)
     end
     local function onCharRemoving(char)
         ClearDrawing(plr)
-        RestoreOriginalHeadSize(plr)
+        local head = char:FindFirstChild("Head")
+        if head then
+            RestoreHitbox(head)
+        end
     end
     plr.CharacterAdded:Connect(onCharAdded)
     plr.CharacterRemoving:Connect(onCharRemoving)
@@ -1046,10 +1095,20 @@ end
 table.insert(Connections, Players.PlayerAdded:Connect(onPlayerAdded))
 table.insert(Connections, Players.PlayerRemoving:Connect(function(plr)
     ClearDrawing(plr)
-    RestoreOriginalHeadSize(plr)
+    local char = plr.Character
+    if char then
+        local head = char:FindFirstChild("Head")
+        if head then
+            RestoreHitbox(head)
+        end
+    end
+    if HitboxConnections[plr] then
+        pcall(function() HitboxConnections[plr]:Disconnect() end)
+        HitboxConnections[plr] = nil
+    end
 end))
 
--- ==================== WALKSPEED PROPERTY HOOK (NEW METHOD) ====================
+-- ==================== WALKSPEED PROPERTY HOOK ====================
 local OriginalWalkSpeed = 16
 local WalkSpeedHooks = {}
 
@@ -1273,13 +1332,6 @@ local function MainRender()
                     elseif lObj then lObj.Visible = false end
                 end
             else for _, line in ipairs(D.Skeleton) do line.Visible = false end end
-
-            if Config.Hitbox.ViewHitbox and OnScreen and screenRadius > 0 then
-                D.HitboxCircle.Position = Vector2_new(HeadScreenPos.X, HeadScreenPos.Y)
-                D.HitboxCircle.Radius = screenRadius
-                D.HitboxCircle.Color = Color3_fromRGB(Config.Hitbox.HitboxColor.R, Config.Hitbox.HitboxColor.G, Config.Hitbox.HitboxColor.B)
-                D.HitboxCircle.Visible = true
-            else D.HitboxCircle.Visible = false end
         else
             HideAll(D)
         end
@@ -1310,7 +1362,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
         hum.WalkSpeed = Config.Movement.WalkSpeed
     end
     
-    -- No Jump Slowdown — forces speed while airborne so games can't reduce it
+    -- No Jump Slowdown
     if Config.Movement.NoJumpSlowdown then
         if hum.FloorMaterial == Enum.Material.Air then
             local targetSpeed = Config.Movement.EnabledWS and Config.Movement.WalkSpeed or OriginalWalkSpeed
@@ -1332,7 +1384,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
         hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinAmount), 0)
     end
     
-    -- ==================== HITBOX EXPANDER ====================
+    -- ==================== HITBOX EXPANDER (COLLISION-FREE) ====================
     if Config.Hitbox.Enabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr == LocalPlayer then continue end
@@ -1341,26 +1393,16 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
             local head = targetChar:FindFirstChild("Head")
             if not head then continue end
             
-            if not OriginalHeadSizes[plr] then
-                OriginalHeadSizes[plr] = head.Size
-            end
-            
-            local targetSize = OriginalHeadSizes[plr] * Config.Hitbox.HeadSize
-            if head.Size ~= targetSize then
-                head.Size = targetSize
-            end
+            ExpandHitbox(head)
         end
     else
-        for plr, origSize in pairs(OriginalHeadSizes) do
-            local targetChar = plr.Character
-            if targetChar then
-                local head = targetChar:FindFirstChild("Head")
-                if head then
-                    pcall(function() head.Size = origSize end)
-                end
+        -- Restore all expanded hitboxes when disabled
+        for head, _ in pairs(OriginalHeadData) do
+            if typeof(head) == "Instance" and head:IsA("BasePart") then
+                RestoreHitbox(head)
             end
-            OriginalHeadSizes[plr] = nil
         end
+        table.clear(OriginalHeadData)
     end
 end))
 
