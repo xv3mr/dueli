@@ -1266,10 +1266,32 @@ local function MainRender()
         -- ESP drawing
         if Config.Visuals.Enabled then
             local IsR15 = (Char:FindFirstChild("UpperTorso") ~= nil)
-            local ScaleFactor = 1000 / Dist
-            local BoxSizeY = (IsR15 and 5.5 or 5.0) * ScaleFactor
-            local BoxSizeX = 3.5 * ScaleFactor
-            local BoxPos = Vector2_new(RootPos.X - BoxSizeX/2, RootPos.Y - BoxSizeY/2)
+            
+            -- ==================== FIXED BOX SIZING ====================
+            -- Use actual screen-projected height instead of magic 1000/Dist formula
+            local topPart = Char:FindFirstChild("Head")
+            local bottomPart = IsR15 and Char:FindFirstChild("LowerTorso") or Char:FindFirstChild("Torso")
+            if not bottomPart then bottomPart = Root end
+            
+            local topPos, topVis = WTVP(Camera, topPart.Position + Vector3.new(0, 0.5, 0))
+            local bottomPos, bottomVis = WTVP(Camera, bottomPart.Position - Vector3.new(0, 2, 0))
+            
+            local BoxSizeY, BoxSizeX, BoxPos
+            if topVis and bottomVis then
+                BoxSizeY = math.abs(bottomPos.Y - topPos.Y)
+                BoxSizeX = BoxSizeY * 0.45 -- width is ~45% of height for humanoid proportions
+                BoxPos = Vector2_new(RootPos.X - BoxSizeX / 2, topPos.Y)
+            else
+                -- Fallback to old method if projection fails
+                local ScaleFactor = 1000 / Dist
+                BoxSizeY = (IsR15 and 5.5 or 5.0) * ScaleFactor
+                BoxSizeX = 3.5 * ScaleFactor
+                BoxPos = Vector2_new(RootPos.X - BoxSizeX / 2, RootPos.Y - BoxSizeY / 2)
+            end
+            -- Clamp box size to prevent insanity on extreme FOVs
+            BoxSizeX = math.clamp(BoxSizeX, 10, 400)
+            BoxSizeY = math.clamp(BoxSizeY, 20, 600)
+            -- ==========================================================
 
             if Config.Visuals.Box then
                 if Config.Visuals.BoxOutline then D.BoxOutline.Size = Vector2_new(BoxSizeX, BoxSizeY); D.BoxOutline.Position = BoxPos; D.BoxOutline.Visible = true else D.BoxOutline.Visible = false end
