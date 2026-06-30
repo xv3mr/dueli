@@ -12,6 +12,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
@@ -30,16 +31,6 @@ local Color3_fromRGB = Color3.fromRGB
 local Math_floor = math.floor
 local CFrame_new = CFrame.new
 local CFrame_lookAt = CFrame.lookAt
-
-local Theme = {
-    Background = Color3_fromRGB(12, 12, 15),
-    Sidebar = Color3_fromRGB(8, 8, 10),
-    Topbar = Color3_fromRGB(16, 16, 20),
-    Element = Color3_fromRGB(20, 20, 25),
-    Accent = Color3_fromRGB(0, 128, 255),
-    TextActive = Color3_fromRGB(255, 255, 255),
-    TextMuted = Color3_fromRGB(150, 150, 150),
-}
 
 local ScriptRunning = true
 local ESP_Store = {}
@@ -76,20 +67,62 @@ local KeyMap = {
 }
 local CurrentKey = KeyMap["Left Shift"]
 
+-- ==================== CONFIG SERIALIZATION ====================
+local function ConfigToSaveable(cfg)
+    local result = {}
+    for k, v in pairs(cfg) do
+        if typeof(v) == "Color3" then
+            result[k] = {__type = "Color3", R = math.floor(v.R * 255), G = math.floor(v.G * 255), B = math.floor(v.B * 255)}
+        elseif typeof(v) == "table" then
+            result[k] = ConfigToSaveable(v)
+        else
+            result[k] = v
+        end
+    end
+    return result
+end
+
+local function SaveableToConfig(data, target)
+    for k, v in pairs(data) do
+        if typeof(v) == "table" then
+            if v.__type == "Color3" then
+                target[k] = Color3_fromRGB(v.R, v.G, v.B)
+            elseif target[k] and typeof(target[k]) == "table" then
+                SaveableToConfig(v, target[k])
+            else
+                target[k] = v
+            end
+        else
+            target[k] = v
+        end
+    end
+end
+
 -- ==================== CONFIG ====================
 local Config = {
+    Theme = {
+        Background = {R=12, G=12, B=15},
+        Sidebar = {R=8, G=8, B=10},
+        Topbar = {R=16, G=16, B=20},
+        Element = {R=20, G=20, B=25},
+        Accent = {R=0, G=128, B=255},
+        TextActive = {R=255, G=255, B=255},
+        TextMuted = {R=150, G=150, B=150},
+    },
     SilentAim = {
         Enabled = false,
+        TeamCheck = true,
         FOV = 100,
         AimPart = "Head",
         WallCheck = true,
         WallBang = false,
         ShowFOV = false,
-        FOVColor = Theme.Accent,
+        FOVColor = Color3_fromRGB(0, 128, 255),
     },
     AimLock = {
         AlwaysEnabled = false,
         BindEnabled = true,
+        TeamCheck = true,
         Smoothness = 0.15,
         FOV = 200,
         WallCheck = true,
@@ -138,6 +171,7 @@ local Config = {
         Bhop = false, BhopKey = Enum.KeyCode.V,
         Spinbot = false, SpinSpeed = 50,
         NoJumpSlowdown = false,
+        NoClip = false,
     },
     GunMods = { InfiniteAmmo = false, ReloadInterval = 1.0 },
     Hitbox = {
@@ -147,22 +181,44 @@ local Config = {
     }
 }
 
--- ==================== NOTIFICATIONS ====================
+-- Auto-load saved config on startup
+pcall(function()
+    if isfile("AetherConfig/Settings.json") then
+        local json = readfile("AetherConfig/Settings.json")
+        local data = HttpService:JSONDecode(json)
+        SaveableToConfig(data, Config)
+    end
+end)
+
+-- ==================== NOTIFICATIONS (MINIMAL) ====================
 local function SendNotification(text)
     OrionLib:MakeNotification({
         Name = "Aether",
         Content = text,
         Image = "rbxassetid://4483345998",
-        Time = 3
+        Time = 2.5
     })
 end
 
 -- ==================== ORION UI ====================
+local function GetThemeColor(key)
+    local c = Config.Theme[key]
+    return Color3_fromRGB(c.R, c.G, c.B)
+end
+
 local Window = OrionLib:MakeWindow({
     Name = "Aether",
     HidePremium = false,
     SaveConfig = true,
-    ConfigFolder = "AetherConfig"
+    ConfigFolder = "AetherConfig",
+    Theme = {
+        Main = GetThemeColor("Background"),
+        Second = GetThemeColor("Sidebar"),
+        Stroke = GetThemeColor("Element"),
+        Divider = GetThemeColor("Topbar"),
+        Text = GetThemeColor("TextActive"),
+        TextDark = GetThemeColor("TextMuted"),
+    }
 })
 
 local OrionElements = {}
@@ -173,6 +229,11 @@ OrionElements.SilentAimEnabled = SilentAimTab:AddToggle({
     Name = "Enabled",
     Default = Config.SilentAim.Enabled,
     Callback = function(v) Config.SilentAim.Enabled = v end
+})
+OrionElements.SilentAimTeamCheck = SilentAimTab:AddToggle({
+    Name = "Team Check",
+    Default = Config.SilentAim.TeamCheck,
+    Callback = function(v) Config.SilentAim.TeamCheck = v end
 })
 OrionElements.SilentAimWallCheck = SilentAimTab:AddToggle({
     Name = "Wall Check",
@@ -223,6 +284,11 @@ OrionElements.AimLockAlways = AimLockTab:AddToggle({
             end
         end
     end
+})
+OrionElements.AimLockTeamCheck = AimLockTab:AddToggle({
+    Name = "Team Check",
+    Default = Config.AimLock.TeamCheck,
+    Callback = function(v) Config.AimLock.TeamCheck = v end
 })
 OrionElements.AimLockBind = AimLockTab:AddToggle({
     Name = "Bind Mode (Hold Key)",
@@ -449,7 +515,7 @@ OrionElements.MoveEnabledWS = MoveTab:AddToggle({
 OrionElements.MoveWalkSpeed = MoveTab:AddSlider({
     Name = "WalkSpeed",
     Min = 16,
-    Max = 500,
+    Max = 50,
     Default = Config.Movement.WalkSpeed,
     Increment = 1,
     ValueName = "",
@@ -504,6 +570,13 @@ OrionElements.MoveNoJumpSlowdown = MoveTab:AddToggle({
     Callback = function(v) Config.Movement.NoJumpSlowdown = v end
 })
 
+-- NoClip
+OrionElements.MoveNoClip = MoveTab:AddToggle({
+    Name = "NoClip",
+    Default = Config.Movement.NoClip,
+    Callback = function(v) Config.Movement.NoClip = v end
+})
+
 -- Gun Mods Tab
 local GunModsTab = Window:MakeTab({Name = "Gun Mods", Icon = "rbxassetid://4483345998"})
 OrionElements.InfAmmo = GunModsTab:AddToggle({
@@ -521,7 +594,7 @@ OrionElements.ReloadInterval = GunModsTab:AddSlider({
     Callback = function(v) Config.GunMods.ReloadInterval = v end
 })
 
--- Hitbox Tab (View Hitbox removed)
+-- Hitbox Tab
 local HitboxTab = Window:MakeTab({Name = "Hitbox", Icon = "rbxassetid://4483345998"})
 OrionElements.HitboxEnabled = HitboxTab:AddToggle({
     Name = "Expand Hitbox",
@@ -549,6 +622,46 @@ HitboxTab:AddColorpicker({
 
 -- Settings Tab
 local SetTab = Window:MakeTab({Name = "Settings", Icon = "rbxassetid://4483345998"})
+
+-- Config Management
+SetTab:AddLabel("Config Management")
+SetTab:AddButton({
+    Name = "Save Config",
+    Callback = function()
+        local success, err = pcall(function()
+            local saveData = ConfigToSaveable(Config)
+            local json = HttpService:JSONEncode(saveData)
+            if not isfolder("AetherConfig") then
+                makefolder("AetherConfig")
+            end
+            writefile("AetherConfig/Settings.json", json)
+            SendNotification("Config saved!")
+        end)
+        if not success then
+            SendNotification("Save failed: " .. tostring(err))
+        end
+    end
+})
+
+SetTab:AddButton({
+    Name = "Load Config",
+    Callback = function()
+        local success, err = pcall(function()
+            if isfile("AetherConfig/Settings.json") then
+                local json = readfile("AetherConfig/Settings.json")
+                local data = HttpService:JSONDecode(json)
+                SaveableToConfig(data, Config)
+                SendNotification("Config loaded! Restart to apply theme.")
+            else
+                SendNotification("No saved config found!")
+            end
+        end)
+        if not success then
+            SendNotification("Load failed: " .. tostring(err))
+        end
+    end
+})
+
 SetTab:AddButton({
     Name = "UNLOAD THE SCRIPT",
     Callback = function()
@@ -557,6 +670,7 @@ SetTab:AddButton({
         table.clear(Connections)
         CleanupWalkSpeedHooks()
         CleanupHitboxHooks()
+        CleanupNoClip()
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildWhichIsA("Humanoid")
         if hum then hum.WalkSpeed = OriginalWalkSpeed end
         for plr, data in pairs(ESP_Store) do
@@ -648,7 +762,7 @@ MobileButton.InputBegan:Connect(function(input)
     end
 end)
 
--- ==================== KEYBIND HANDLING ====================
+-- ==================== KEYBIND HANDLING (NO SPAM) ====================
 local function InputMatches(input, key)
     if typeof(key) == "EnumItem" then
         if key.EnumType == Enum.KeyCode then
@@ -667,20 +781,10 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, ga
 
     if input.KeyCode == Config.Triggerbot.Key then
         Config.Triggerbot.Enabled = not Config.Triggerbot.Enabled
-        if Config.Triggerbot.Enabled then
-            SendNotification("Triggerbot: ENABLED")
-        else
-            SendNotification("Triggerbot: DISABLED")
-        end
     end
 
     if input.KeyCode == Config.Movement.BhopKey then
         Config.Movement.Bhop = not Config.Movement.Bhop
-        if Config.Movement.Bhop then
-            SendNotification("Auto-Bhop: ENABLED")
-        else
-            SendNotification("Auto-Bhop: DISABLED")
-        end
     end
 end))
 
@@ -870,8 +974,9 @@ local function GetCharacterHumanoid(Char)
     return Char:FindFirstChild("Humanoid") or Char:FindFirstChildWhichIsA("Humanoid")
 end
 local CommonAttributes = {"Team", "team", "Side", "side", "Faction", "faction", "Squad", "squad"}
+
+-- Raw team check (no config dependency)
 local function IsEnemy(plr)
-    if not Config.Visuals.TeamCheck then return true end 
     if plr == LocalPlayer then return false end 
     if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then return false end
     local PColor = plr.TeamColor; local LColor = LocalPlayer.TeamColor
@@ -892,6 +997,7 @@ local function IsEnemy(plr)
     end
     return true
 end
+
 local function CheckVisibility(targetPart, targetCharacter)
     if not targetPart then return false end
     local Origin = Camera.CFrame.Position
@@ -1000,7 +1106,7 @@ task.spawn(function()
 end)
 
 -- ==================== HITBOX (FIXED - no collision freeze) ====================
-local OriginalHeadData = {} -- stores {Size, Massless, CanCollide} per head instance
+local OriginalHeadData = {}
 local HitboxConnections = {}
 
 local function CleanupHitboxHooks()
@@ -1137,8 +1243,19 @@ if LocalPlayer.Character then
     end
 end
 
+-- NoClip state
+local NoClipOriginal = {}
+
+local function CleanupNoClip()
+    for part, original in pairs(NoClipOriginal) do
+        pcall(function() part.CanCollide = original end)
+    end
+    table.clear(NoClipOriginal)
+end
+
 -- Hook future humanoids after respawn
 table.insert(Connections, LocalPlayer.CharacterAdded:Connect(function(char)
+    table.clear(NoClipOriginal)
     local hum = char:WaitForChild("Humanoid", 2)
     if hum then 
         OriginalWalkSpeed = hum.WalkSpeed
@@ -1151,6 +1268,19 @@ local function IsLockActive()
     local mobileActive = Config.AimLock.AlwaysEnabled and MobileLockActive
     local bindActive = Config.AimLock.BindEnabled and AimLockHeld
     return mobileActive or bindActive
+end
+
+-- ==================== AIM LOCK TARGET VALIDATION ====================
+local function IsAimLockTargetValid()
+    if not AimLockTarget then return false end
+    -- Check if target part still exists and has a parent (character still exists)
+    if not AimLockTarget.Parent then return false end
+    -- Check if target character has a humanoid and is alive
+    local char = AimLockTarget.Parent
+    local hum = GetCharacterHumanoid(char)
+    if not hum then return false end
+    if hum.Health <= 0 then return false end
+    return true
 end
 
 -- ==================== MAIN RENDER LOOP ====================
@@ -1177,6 +1307,15 @@ local function MainRender()
     local aimLockBest = nil
     local aimLockBestDist = Config.AimLock.FOV
 
+    -- Check if current AimLockTarget is still valid (alive and bound held/toggle on)
+    if AimLockTarget and not IsLockActive() then
+        -- Bind released or toggle turned off - clear target
+        AimLockTarget = nil
+    elseif AimLockTarget and not IsAimLockTargetValid() then
+        -- Target died or character removed - clear target
+        AimLockTarget = nil
+    end
+
     local AllPlayers = Players:GetPlayers()
     for i = 1, #AllPlayers do
         local plr = AllPlayers[i]
@@ -1194,7 +1333,6 @@ local function MainRender()
         local RootPos3D = Root.Position
         local Dist = (RootPos3D - Camera.CFrame.Position).Magnitude
         if Dist > Config.Visuals.RenderDistance then HideAll(D); continue end
-        if not IsEnemy(plr) then HideAll(D); continue end
 
         local Hum = GetCharacterHumanoid(Char)
         local HP = (Hum and Hum.Health) or 100
@@ -1231,136 +1369,155 @@ local function MainRender()
             IsVisible = CheckVisibility(Head, Char)
         end
 
-        -- Silent aim target selection
+        -- Silent aim target selection (with explicit team check)
         if Config.SilentAim.Enabled and SilentOnScreen then
-            local magToCenter = (Vector2_new(SilentScreenPos.X, SilentScreenPos.Y) - MouseLoc).Magnitude
-            local distToCircle = math.max(0, magToCenter - screenRadius)
-            if distToCircle < silentBestDist then
-                local passWall = true
-                if Config.SilentAim.WallCheck and not Config.SilentAim.WallBang then
-                    passWall = IsVisible
-                end
-                if passWall then
-                    silentBest = SilentPart
-                    silentBestDist = distToCircle
+            local isValidTarget = true
+            if Config.SilentAim.TeamCheck then
+                isValidTarget = IsEnemy(plr)
+            end
+            if isValidTarget then
+                local magToCenter = (Vector2_new(SilentScreenPos.X, SilentScreenPos.Y) - MouseLoc).Magnitude
+                local distToCircle = math.max(0, magToCenter - screenRadius)
+                if distToCircle < silentBestDist then
+                    local passWall = true
+                    if Config.SilentAim.WallCheck and not Config.SilentAim.WallBang then
+                        passWall = IsVisible
+                    end
+                    if passWall then
+                        silentBest = SilentPart
+                        silentBestDist = distToCircle
+                    end
                 end
             end
         end
 
-        -- Aim Lock target selection
-        if IsLockActive() and LockOnScreen then
-            local magToCenter = (Vector2_new(LockScreenPos.X, LockScreenPos.Y) - ScreenCenter).Magnitude
-            local distToCircle = math.max(0, magToCenter - screenRadius)
-            if distToCircle < aimLockBestDist then
-                local passWall = true
-                if Config.AimLock.WallCheck then
-                    passWall = IsVisible
-                end
-                if passWall then
-                    aimLockBest = LockPart
-                    aimLockBestDist = distToCircle
+        -- Aim Lock target selection (with explicit team check + persistence)
+        -- Only search for new target if we don't already have a valid locked target
+        if not AimLockTarget and IsLockActive() and LockOnScreen then
+            local isValidTarget = true
+            if Config.AimLock.TeamCheck then
+                isValidTarget = IsEnemy(plr)
+            end
+            if isValidTarget then
+                local magToCenter = (Vector2_new(LockScreenPos.X, LockScreenPos.Y) - ScreenCenter).Magnitude
+                local distToCircle = math.max(0, magToCenter - screenRadius)
+                if distToCircle < aimLockBestDist then
+                    local passWall = true
+                    if Config.AimLock.WallCheck then
+                        passWall = IsVisible
+                    end
+                    if passWall then
+                        aimLockBest = LockPart
+                        aimLockBestDist = distToCircle
+                    end
                 end
             end
         end
 
-        -- ESP drawing
+        -- ESP drawing (with explicit team check)
         if Config.Visuals.Enabled then
-            local IsR15 = (Char:FindFirstChild("UpperTorso") ~= nil)
-            
-            -- ==================== FIXED BOX SIZING ====================
-            -- Use actual screen-projected height instead of magic 1000/Dist formula
-            local topPart = Char:FindFirstChild("Head")
-            local bottomPart = IsR15 and Char:FindFirstChild("LowerTorso") or Char:FindFirstChild("Torso")
-            if not bottomPart then bottomPart = Root end
-            
-            local topPos, topVis = WTVP(Camera, topPart.Position + Vector3.new(0, 0.5, 0))
-            local bottomPos, bottomVis = WTVP(Camera, bottomPart.Position - Vector3.new(0, 2, 0))
-            
-            local BoxSizeY, BoxSizeX, BoxPos
-            if topVis and bottomVis then
-                BoxSizeY = math.abs(bottomPos.Y - topPos.Y)
-                BoxSizeX = BoxSizeY * 0.45 -- width is ~45% of height for humanoid proportions
-                BoxPos = Vector2_new(RootPos.X - BoxSizeX / 2, topPos.Y)
-            else
-                -- Fallback to old method if projection fails
-                local ScaleFactor = 1000 / Dist
-                BoxSizeY = (IsR15 and 5.5 or 5.0) * ScaleFactor
-                BoxSizeX = 3.5 * ScaleFactor
-                BoxPos = Vector2_new(RootPos.X - BoxSizeX / 2, RootPos.Y - BoxSizeY / 2)
+            local showESP = true
+            if Config.Visuals.TeamCheck then
+                showESP = IsEnemy(plr)
             end
-            -- Clamp box size to prevent insanity on extreme FOVs
-            BoxSizeX = math.clamp(BoxSizeX, 10, 400)
-            BoxSizeY = math.clamp(BoxSizeY, 20, 600)
-            -- ==========================================================
-
-            if Config.Visuals.Box then
-                if Config.Visuals.BoxOutline then D.BoxOutline.Size = Vector2_new(BoxSizeX, BoxSizeY); D.BoxOutline.Position = BoxPos; D.BoxOutline.Visible = true else D.BoxOutline.Visible = false end
-                D.Box.Size = Vector2_new(BoxSizeX, BoxSizeY); D.Box.Position = BoxPos
-                D.Box.Color = Color3_fromRGB(Config.Visuals.BoxColor.R, Config.Visuals.BoxColor.G, Config.Visuals.BoxColor.B)
-                D.Box.Visible = true
-            else D.Box.Visible = false; D.BoxOutline.Visible = false end
-
-            if Config.Visuals.Names then
-                D.Name.Text = plr.Name
-                D.Name.Position = Vector2_new(RootPos.X, BoxPos.Y - 18)
-                D.Name.Color = Color3_fromRGB(Config.Visuals.NameColor.R, Config.Visuals.NameColor.G, Config.Visuals.NameColor.B)
-                D.Name.Visible = true
-            else D.Name.Visible = false end
-
-            if Config.Visuals.Info then
-                D.Info.Text = Math_floor(HP) .. " HP | " .. Math_floor(Dist) .. "m"
-                D.Info.Position = Vector2_new(RootPos.X, BoxPos.Y + BoxSizeY + 4)
-                D.Info.Color = Color3_fromRGB(Config.Visuals.InfoColor.R, Config.Visuals.InfoColor.G, Config.Visuals.InfoColor.B)
-                D.Info.Visible = true
-            else D.Info.Visible = false end
-
-            if Config.Visuals.Snaplines then
-                D.Snapline.From = ScreenBottom; D.Snapline.To = Vector2_new(RootPos.X, RootPos.Y)
-                D.Snapline.Color = Color3_fromRGB(Config.Visuals.SnaplineColor.R, Config.Visuals.SnaplineColor.G, Config.Visuals.SnaplineColor.B)
-                D.Snapline.Visible = true
-            else D.Snapline.Visible = false end
-
-            if Config.Visuals.HeadCircle and OnScreen then
-                D.HeadCircle.Position = Vector2_new(HeadScreenPos.X, HeadScreenPos.Y)
-                D.HeadCircle.Radius = screenRadius > 0 and screenRadius or (ScaleFactor * 0.8)
-                D.HeadCircle.Color = Color3_fromRGB(Config.Visuals.HeadCircleColor.R, Config.Visuals.HeadCircleColor.G, Config.Visuals.HeadCircleColor.B)
-                D.HeadCircle.Visible = true
-            else D.HeadCircle.Visible = false end
-
-            if Config.Visuals.ViewLine and OnScreen then
-                local endPos = Head.Position + (Head.CFrame.LookVector * 5)
-                local endScreen, endVis = WTVP(Camera, endPos)
-                if endVis then
-                    D.ViewLine.From = Vector2_new(HeadScreenPos.X, HeadScreenPos.Y)
-                    D.ViewLine.To = Vector2_new(endScreen.X, endScreen.Y)
-                    D.ViewLine.Color = Color3_fromRGB(Config.Visuals.ViewLineColor.R, Config.Visuals.ViewLineColor.G, Config.Visuals.ViewLineColor.B)
-                    D.ViewLine.Visible = true
-                else D.ViewLine.Visible = false end
-            else D.ViewLine.Visible = false end
-
-            if Config.Visuals.Skeleton then
-                local Links = IsR15 and R15_Links or R6_Links
-                for idx, link in ipairs(Links) do
-                    local p1, p2 = Char:FindFirstChild(link[1]), Char:FindFirstChild(link[2])
-                    local lObj = D.Skeleton[idx]
-                    if p1 and p2 and lObj then
-                        local pos1, vis1 = WTVP(Camera, p1.Position)
-                        local pos2, vis2 = WTVP(Camera, p2.Position)
-                        if vis1 and vis2 then
-                            lObj.From = Vector2_new(pos1.X, pos1.Y); lObj.To = Vector2_new(pos2.X, pos2.Y)
-                            lObj.Color = Color3_fromRGB(Config.Visuals.SkeletonColor.R, Config.Visuals.SkeletonColor.G, Config.Visuals.SkeletonColor.B)
-                            lObj.Visible = true
-                        else lObj.Visible = false end
-                    elseif lObj then lObj.Visible = false end
+            if showESP then
+                local IsR15 = (Char:FindFirstChild("UpperTorso") ~= nil)
+                
+                local topPart = Char:FindFirstChild("Head")
+                local bottomPart = IsR15 and Char:FindFirstChild("LowerTorso") or Char:FindFirstChild("Torso")
+                if not bottomPart then bottomPart = Root end
+                
+                local topPos, topVis = WTVP(Camera, topPart.Position + Vector3.new(0, 0.5, 0))
+                local bottomPos, bottomVis = WTVP(Camera, bottomPart.Position - Vector3.new(0, 2, 0))
+                
+                local BoxSizeY, BoxSizeX, BoxPos
+                if topVis and bottomVis then
+                    BoxSizeY = math.abs(bottomPos.Y - topPos.Y)
+                    BoxSizeX = BoxSizeY * 0.45
+                    BoxPos = Vector2_new(RootPos.X - BoxSizeX / 2, topPos.Y)
+                else
+                    local ScaleFactor = 1000 / Dist
+                    BoxSizeY = (IsR15 and 5.5 or 5.0) * ScaleFactor
+                    BoxSizeX = 3.5 * ScaleFactor
+                    BoxPos = Vector2_new(RootPos.X - BoxSizeX / 2, RootPos.Y - BoxSizeY / 2)
                 end
-            else for _, line in ipairs(D.Skeleton) do line.Visible = false end end
+                BoxSizeX = math.clamp(BoxSizeX, 10, 400)
+                BoxSizeY = math.clamp(BoxSizeY, 20, 600)
+
+                if Config.Visuals.Box then
+                    if Config.Visuals.BoxOutline then D.BoxOutline.Size = Vector2_new(BoxSizeX, BoxSizeY); D.BoxOutline.Position = BoxPos; D.BoxOutline.Visible = true else D.BoxOutline.Visible = false end
+                    D.Box.Size = Vector2_new(BoxSizeX, BoxSizeY); D.Box.Position = BoxPos
+                    D.Box.Color = Color3_fromRGB(Config.Visuals.BoxColor.R, Config.Visuals.BoxColor.G, Config.Visuals.BoxColor.B)
+                    D.Box.Visible = true
+                else D.Box.Visible = false; D.BoxOutline.Visible = false end
+
+                if Config.Visuals.Names then
+                    D.Name.Text = plr.Name
+                    D.Name.Position = Vector2_new(RootPos.X, BoxPos.Y - 18)
+                    D.Name.Color = Color3_fromRGB(Config.Visuals.NameColor.R, Config.Visuals.NameColor.G, Config.Visuals.NameColor.B)
+                    D.Name.Visible = true
+                else D.Name.Visible = false end
+
+                if Config.Visuals.Info then
+                    D.Info.Text = Math_floor(HP) .. " HP | " .. Math_floor(Dist) .. "m"
+                    D.Info.Position = Vector2_new(RootPos.X, BoxPos.Y + BoxSizeY + 4)
+                    D.Info.Color = Color3_fromRGB(Config.Visuals.InfoColor.R, Config.Visuals.InfoColor.G, Config.Visuals.InfoColor.B)
+                    D.Info.Visible = true
+                else D.Info.Visible = false end
+
+                if Config.Visuals.Snaplines then
+                    D.Snapline.From = ScreenBottom; D.Snapline.To = Vector2_new(RootPos.X, RootPos.Y)
+                    D.Snapline.Color = Color3_fromRGB(Config.Visuals.SnaplineColor.R, Config.Visuals.SnaplineColor.G, Config.Visuals.SnaplineColor.B)
+                    D.Snapline.Visible = true
+                else D.Snapline.Visible = false end
+
+                if Config.Visuals.HeadCircle and OnScreen then
+                    D.HeadCircle.Position = Vector2_new(HeadScreenPos.X, HeadScreenPos.Y)
+                    D.HeadCircle.Radius = screenRadius > 0 and screenRadius or (ScaleFactor * 0.8)
+                    D.HeadCircle.Color = Color3_fromRGB(Config.Visuals.HeadCircleColor.R, Config.Visuals.HeadCircleColor.G, Config.Visuals.HeadCircleColor.B)
+                    D.HeadCircle.Visible = true
+                else D.HeadCircle.Visible = false end
+
+                if Config.Visuals.ViewLine and OnScreen then
+                    local endPos = Head.Position + (Head.CFrame.LookVector * 5)
+                    local endScreen, endVis = WTVP(Camera, endPos)
+                    if endVis then
+                        D.ViewLine.From = Vector2_new(HeadScreenPos.X, HeadScreenPos.Y)
+                        D.ViewLine.To = Vector2_new(endScreen.X, endScreen.Y)
+                        D.ViewLine.Color = Color3_fromRGB(Config.Visuals.ViewLineColor.R, Config.Visuals.ViewLineColor.G, Config.Visuals.ViewLineColor.B)
+                        D.ViewLine.Visible = true
+                    else D.ViewLine.Visible = false end
+                else D.ViewLine.Visible = false end
+
+                if Config.Visuals.Skeleton then
+                    local Links = IsR15 and R15_Links or R6_Links
+                    for idx, link in ipairs(Links) do
+                        local p1, p2 = Char:FindFirstChild(link[1]), Char:FindFirstChild(link[2])
+                        local lObj = D.Skeleton[idx]
+                        if p1 and p2 and lObj then
+                            local pos1, vis1 = WTVP(Camera, p1.Position)
+                            local pos2, vis2 = WTVP(Camera, p2.Position)
+                            if vis1 and vis2 then
+                                lObj.From = Vector2_new(pos1.X, pos1.Y); lObj.To = Vector2_new(pos2.X, pos2.Y)
+                                lObj.Color = Color3_fromRGB(Config.Visuals.SkeletonColor.R, Config.Visuals.SkeletonColor.G, Config.Visuals.SkeletonColor.B)
+                                lObj.Visible = true
+                            else lObj.Visible = false end
+                        elseif lObj then lObj.Visible = false end
+                    end
+                else for _, line in ipairs(D.Skeleton) do line.Visible = false end end
+            else
+                HideAll(D)
+            end
         else
             HideAll(D)
         end
     end
 
+    -- Only assign new target if we don't have a persisted one
+    if not AimLockTarget then
+        AimLockTarget = aimLockBest
+    end
     SilentAimTarget = silentBest
-    AimLockTarget = aimLockBest
 
     -- Movement (JumpPower only — WalkSpeed handled in Heartbeat)
     local Hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
@@ -1369,7 +1526,7 @@ local function MainRender()
     end
 end
 
--- ==================== WALKSPEED + BHOP + SPINBOT + HITBOX + NO JUMP SLOWDOWN HEARTBEAT ====================
+-- ==================== WALKSPEED + BHOP + SPINBOT + HITBOX + NO JUMP SLOWDOWN + NOCLIP HEARTBEAT ====================
 table.insert(Connections, RunService.Heartbeat:Connect(function()
     if not ScriptRunning then return end
     
@@ -1379,7 +1536,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
     local hum = char:FindFirstChildWhichIsA("Humanoid")
     if not hum then return end
     
-    -- WalkSpeed (unconditional set + property hook prevents game from reverting)
+    -- WalkSpeed
     if Config.Movement.EnabledWS then
         hum.WalkSpeed = Config.Movement.WalkSpeed
     end
@@ -1406,7 +1563,28 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
         hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinAmount), 0)
     end
     
-    -- ==================== HITBOX EXPANDER (COLLISION-FREE) ====================
+    -- NoClip
+    if Config.Movement.NoClip then
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if NoClipOriginal[part] == nil then
+                    NoClipOriginal[part] = part.CanCollide
+                end
+                if part.CanCollide ~= false then
+                    part.CanCollide = false
+                end
+            end
+        end
+    else
+        for part, original in pairs(NoClipOriginal) do
+            if typeof(part) == "Instance" and part:IsA("BasePart") and part.Parent then
+                part.CanCollide = original
+            end
+        end
+        table.clear(NoClipOriginal)
+    end
+    
+    -- Hitbox Expander
     if Config.Hitbox.Enabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr == LocalPlayer then continue end
@@ -1414,11 +1592,9 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
             if not targetChar then continue end
             local head = targetChar:FindFirstChild("Head")
             if not head then continue end
-            
             ExpandHitbox(head)
         end
     else
-        -- Restore all expanded hitboxes when disabled
         for head, _ in pairs(OriginalHeadData) do
             if typeof(head) == "Instance" and head:IsA("BasePart") then
                 RestoreHitbox(head)
